@@ -380,6 +380,10 @@ export function ChatPage({ bot }: { bot: Bot }) {
 
           {pending && address && prepare && (
             <div className="msg assistant wide">
+              <p className="review-note">
+                <strong>Check it, then sign.</strong> Nothing is sent until you sign. Every line below is decoded from
+                the transaction itself, not written by the AI.
+              </p>
               {pending.warning && <p className="warning">{pending.warning}</p>}
               <SignPanel
                 key={JSON.stringify(pending.intent)}
