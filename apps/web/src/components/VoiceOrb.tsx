@@ -20,10 +20,10 @@ const mix = (a: Rgb, b: Rgb, t: number): Rgb => [a[0] + (b[0] - a[0]) * t, a[1] 
 const TAU = Math.PI * 2;
 
 /**
- * The voice mode "reactor": rotors turning at different speeds and directions, a thick arc that
- * swells with the loudness, a tick ring driven by the live spectrum and a dark core with the
- * mic (or a waveform while the assistant speaks). Blue while listening, amber while speaking.
- * Drawn on a canvas every animation frame, outside React.
+ * The voice mode orb: a slow outer rotor, an arc that turns the other way and swells with the
+ * loudness, a tick ring driven by the live spectrum and a dark core with the mic (or a waveform
+ * while the assistant speaks). Blue while listening, amber while speaking. Drawn on a canvas
+ * every animation frame, outside React.
  */
 export function VoiceOrb({
   state,
@@ -112,27 +112,16 @@ export function VoiceOrb({
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, size, size);
 
-      // 1. Outer rotor: three long segments, slow.
-      for (let k = 0; k < 3; k++) {
-        const a = t * 0.12 * spin + (k * TAU) / 3;
-        arc(H * 0.96, a, a + TAU / 3 - 0.35, 1.2, rgba(color, 0.32));
+      // Outer rotor: two long segments, slow.
+      for (let k = 0; k < 2; k++) {
+        const a = t * 0.12 * spin + k * Math.PI;
+        arc(H * 0.9, a, a + Math.PI - 0.5, 1.2, rgba(color, 0.3));
       }
-      arc(H * 0.9, 0, TAU, 1, rgba(color, 0.1));
 
-      // 2. Technical rotor: bracket segments and a dashed track, the other way.
-      const b = -t * 0.22 * spin;
-      for (let k = 0; k < 6; k++) {
-        const a = b + (k * TAU) / 6;
-        arc(H * 0.82, a, a + 0.42, 2.5, rgba(color, 0.4));
-      }
-      ctx.setLineDash([1.5, 6]);
-      arc(H * 0.82, 0, TAU, 1, rgba(color, 0.2));
-      ctx.setLineDash([]);
-
-      // 3. Thick arc that swells with the voice.
+      // Arc that swells with the voice, turning the other way.
       const thick = H * (0.03 + 0.03 * level);
-      arc(H * 0.7, 0, TAU, thick, rgba(color, 0.05));
-      const a3 = t * 0.38 * spin;
+      arc(H * 0.72, 0, TAU, thick, rgba(color, 0.05));
+      const a3 = -t * 0.3 * spin;
       let stroke: string | CanvasGradient = rgba(color, 0.9);
       if ("createConicGradient" in ctx) {
         const g = ctx.createConicGradient(a3, c, c);
@@ -144,10 +133,10 @@ export function VoiceOrb({
       }
       ctx.shadowColor = rgba(color, 0.5);
       ctx.shadowBlur = 6 + 10 * level;
-      arc(H * 0.7, a3, a3 + TAU * 0.72, thick, stroke);
+      arc(H * 0.72, a3, a3 + TAU * 0.72, thick, stroke);
       ctx.shadowBlur = 0;
 
-      // 4. Tick ring from the spectrum.
+      // Tick ring from the spectrum.
       const base = t * 0.05;
       ctx.lineWidth = 1.2;
       for (let i = 0; i < TICKS; i++) {
@@ -161,7 +150,7 @@ export function VoiceOrb({
         ctx.stroke();
       }
 
-      // 5. Inner ring and the dark core.
+      // The dark core and its ring.
       const core = ctx.createRadialGradient(c, c - H * 0.1, 0, c, c, H * 0.4);
       core.addColorStop(0, speaking ? "#1d1408" : "#0b1a2b");
       core.addColorStop(1, speaking ? "#0c0804" : "#050c16");
@@ -173,7 +162,6 @@ export function VoiceOrb({
       ctx.shadowBlur = 5 + 8 * level;
       arc(H * 0.4, 0, TAU, 1.5, rgba(color, 0.7));
       ctx.shadowBlur = 0;
-      arc(H * 0.44, 0, TAU, 1, rgba(color, 0.16));
 
       frame = requestAnimationFrame(draw);
     };
