@@ -1,5 +1,6 @@
 import {
   FIAT_SIGNS,
+  STROOPS_PER_UNIT,
   type PriceQuery,
   PriceQuerySchema,
   type ResolvedIntent,
@@ -11,10 +12,13 @@ import {
   fiatToAsset,
   formatFiat,
   formatRate,
+  formatScaled,
   formatUtc,
+  fromStroops,
   isFiat,
   mismatches,
   priceSymbol,
+  toStroops,
   validateIntent,
 } from "@nilo/core";
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -127,14 +131,28 @@ async function convertFiat(intent: SendIntent): Promise<{ intent: SendIntent; co
   };
 }
 
-/** "≈ US$ 12.34", or null when there is no price for the asset (never blocks a payment). */
-async function approxValue(amount: string, assetCode: string): Promise<string | null> {
+/** Value in DISPLAY_FIAT as a 7-decimal amount, or null when there is no price for the asset. */
+async function fiatValue(amount: string, assetCode: string): Promise<string | null> {
   try {
     const [asset, fiat] = await Promise.all([getQuote(priceSymbol(config, assetCode)), getQuote(DISPLAY_FIAT)]);
-    return `≈ ${formatFiat(assetToFiat(amount, asset, fiat), DISPLAY_FIAT)}`;
+    return assetToFiat(amount, asset, fiat);
   } catch {
     return null;
   }
+}
+
+/** "≈ US$ 12.34", or null when there is no price for the asset (never blocks a payment). */
+async function approxValue(amount: string, assetCode: string): Promise<string | null> {
+  const value = await fiatValue(amount, assetCode);
+  return value === null ? null : `≈ ${formatFiat(value, DISPLAY_FIAT)}`;
+}
+
+/** An amount rounded for speech ("9999.9999900" -> "10,000"); the exact one stays on screen. */
+function spokenAmount(amount: string): string {
+  const stroops = toStroops(amount);
+  const digits = stroops >= 100n * STROOPS_PER_UNIT ? 0 : stroops >= STROOPS_PER_UNIT ? 2 : 4;
+  const text = formatScaled(stroops, STROOPS_PER_UNIT, digits);
+  return text.includes(".") ? text.replace(/\.?0+$/, "") : text;
 }
 
 async function validateFresh(intent: SendIntent, address: string): Promise<ResolvedIntent> {
@@ -170,8 +188,9 @@ export function ChatPage({ bot }: { bot: Bot }) {
 
   /** While a voice tool call runs, what the app says is also its result, spoken back. */
   const voiceOut = useRef<string[] | null>(null);
-  const say = (content: string) => {
-    voiceOut.current?.push(content);
+  /** `spoken` replaces `content` in voice mode when the text doesn't read well aloud (long decimals). */
+  const say = (content: string, spoken = content) => {
+    voiceOut.current?.push(spoken);
     setMessages((m) => [...m, { role: "assistant", content }]);
   };
   const voice = useVoiceSession({
@@ -266,18 +285,30 @@ export function ChatPage({ bot }: { bot: Bot }) {
         say("Your account is not on testnet yet. Fund it with Friendbot on the Claim page.");
         return;
       }
-      const lines = await Promise.all(
+      const rows = await Promise.all(
         account.balances.map(async (b) => {
           const code = b.asset_type === "native" ? "XLM" : "asset_code" in b ? b.asset_code : null;
-          if (!code) return `${b.balance} pool share`;
-          const approx = await approxValue(b.balance, code);
-          return `${b.balance} ${code}${approx ? ` (${approx})` : ""}`;
+          if (!code) return { line: `${b.balance} pool share`, spoken: null, value: null };
+          const value = await fiatValue(b.balance, code);
+          const money = value && formatFiat(value, DISPLAY_FIAT);
+          return {
+            line: `${b.balance} ${code}${money ? ` (≈ ${money})` : ""}`,
+            spoken: `about ${spokenAmount(b.balance)} ${code}${money ? `, worth about ${money}` : ""}`,
+            value,
+          };
         }),
       );
+      const values = rows.flatMap((r) => (r.value ? [toStroops(r.value)] : []));
+      const total = values.length > 1 && formatFiat(fromStroops(values.reduce((a, b) => a + b)), DISPLAY_FIAT);
+      const usdcNote = setup === "usdc" ? `\n\n${SETUP_TEXT.usdc}` : "";
       say(
-        `Your available funds:\n${lines.map((l) => `• ${l}`).join("\n")}` +
-          (lines.some((l) => l.includes("≈")) ? "\n\nValues from the Reflector oracle on testnet." : "") +
-          (setup === "usdc" ? `\n\n${SETUP_TEXT.usdc}` : ""),
+        `Your available funds:\n${rows.map((r) => `• ${r.line}`).join("\n")}` +
+          (values.length ? "\n\nValues from the Reflector oracle on testnet." : "") +
+          usdcNote,
+        `Balance: ${rows.flatMap((r) => r.spoken ?? []).join("; ")}.` +
+          (total ? ` In total about ${total}.` : "") +
+          " The exact amounts are on screen." +
+          usdcNote,
       );
     } catch (e) {
       say(`I couldn't load your balance: ${(e as Error).message}`);
