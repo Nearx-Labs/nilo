@@ -84,6 +84,7 @@ export const QUESTIONS: Question[] = [
   },
 ];
 
+export const MIN_SCORE = QUESTIONS.reduce((sum, q) => sum + Math.min(...q.options.map((o) => o.points)), 0);
 export const MAX_SCORE = QUESTIONS.reduce((sum, q) => sum + Math.max(...q.options.map((o) => o.points)), 0);
 
 /** Total of the points answered: up to 12 is conservative, up to 22 moderate, above that aggressive. */

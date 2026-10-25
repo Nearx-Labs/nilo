@@ -3,7 +3,7 @@
 // trustline, test USDC; see useAutoTrustline). The last step shows that setup
 // finishing before the chat opens.
 import { useEffect, useRef, useState } from "react";
-import { MAX_SCORE, PROFILES, QUESTIONS, scoreProfile, useProfile } from "../profile";
+import { MAX_SCORE, MIN_SCORE, PROFILES, QUESTIONS, scoreProfile, useProfile } from "../profile";
 import { type SetupStep, useSetupStatus, useWallet } from "../wallet";
 import { CloseIcon, RefreshIcon } from "./icons";
 
@@ -75,6 +75,15 @@ export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose:
 
   useEffect(() => dialog.current?.focus(), [phase, current]);
 
+  // Picking an answer moves on by itself (Back and Next still work); the last one waits for "See my profile".
+  const advance = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(advance.current), []);
+  function choose(option: number) {
+    setAnswers((a) => a.map((v, q) => (q === current ? option : v)));
+    window.clearTimeout(advance.current);
+    if (current < QUESTIONS.length - 1) advance.current = window.setTimeout(() => setCurrent(current + 1), 260);
+  }
+
   function next() {
     if (answers[current] === null) return;
     if (current < QUESTIONS.length - 1) {
@@ -114,44 +123,64 @@ export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose:
         </header>
 
         {phase === "quiz" ? (
-          <div className="modal-body onboarding-body">
+          <div className="modal-body onboarding-body quiz">
             {current === 0 && mode === "first" && (
-              <p className="muted">Five quick questions to find your profile. Meanwhile we set up your Stellar account.</p>
+              <p className="muted small">Five quick questions to find your profile. Meanwhile we set up your Stellar account.</p>
             )}
-            <div className="quiz-progress">
-              <span>
-                {question.category} · Question {current + 1} of {QUESTIONS.length}
+            <div className="quiz-progress" aria-label={`Question ${current + 1} of ${QUESTIONS.length}`}>
+              <ol className="quiz-steps" aria-hidden="true">
+                {QUESTIONS.map((q, i) => (
+                  <li key={q.id} className={i < current ? "done" : i === current ? "current" : ""} />
+                ))}
+              </ol>
+              <span className="quiz-count">
+                {current + 1}/{QUESTIONS.length}
               </span>
-              <div className="quiz-bar" aria-hidden="true">
-                <i style={{ width: `${((current + 1) / QUESTIONS.length) * 100}%` }} />
-              </div>
             </div>
-            <p className="quiz-prompt" id="quiz-prompt">
-              {question.prompt}
-            </p>
-            <div className="profile-grid" role="group" aria-labelledby="quiz-prompt">
+            <div className="quiz-question">
+              <span className="quiz-category">{question.category}</span>
+              <p className="quiz-prompt" id="quiz-prompt">
+                {question.prompt}
+              </p>
+            </div>
+            <div className="quiz-options" role="radiogroup" aria-labelledby="quiz-prompt">
               {question.options.map((o, i) => (
                 <button
                   key={o.letter}
                   type="button"
-                  className="profile-card"
-                  aria-pressed={answers[current] === i}
-                  onClick={() => setAnswers((a) => a.map((v, q) => (q === current ? i : v)))}
+                  role="radio"
+                  className="quiz-option"
+                  aria-checked={answers[current] === i}
+                  onClick={() => choose(i)}
                 >
-                  <strong>{o.letter}</strong>
-                  <span>{o.text}</span>
+                  <span className="quiz-letter" aria-hidden="true">
+                    {o.letter}
+                  </span>
+                  <span className="quiz-text">{o.text}</span>
                 </button>
               ))}
             </div>
           </div>
         ) : phase === "result" ? (
           <div className="modal-body onboarding-body quiz-result">
-            <p className="muted">You are</p>
+            <span className="quiz-category">Your profile</span>
             <p className="quiz-profile">{result.label}</p>
-            <p>{result.detail}</p>
-            <p className="muted small">
-              Score: {score} of {MAX_SCORE}
-            </p>
+            <p className="quiz-detail">{result.detail}</p>
+            <div className="score-meter" role="img" aria-label={`Score ${score} of ${MAX_SCORE}`}>
+              <div className="score-zones" aria-hidden="true">
+                {PROFILES.map((p) => (
+                  <span key={p.id} className={p.id === result.id ? "on" : ""}>
+                    {p.label}
+                  </span>
+                ))}
+              </div>
+              <div className="score-track" aria-hidden="true">
+                <i style={{ left: `${((score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)) * 100}%` }} />
+              </div>
+              <span className="muted small">
+                Score {score} of {MAX_SCORE}
+              </span>
+            </div>
           </div>
         ) : (
           <div className="modal-body onboarding-body">
@@ -181,14 +210,18 @@ export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose:
           </div>
         )}
 
-        <footer className="modal-foot">
+        <footer className={`modal-foot${phase === "quiz" ? " split" : ""}`}>
           {phase === "quiz" ? (
             <>
-              {current > 0 && (
-                <button type="button" className="secondary" onClick={() => setCurrent(current - 1)}>
-                  Back
-                </button>
-              )}
+              <button
+                type="button"
+                className="secondary quiz-back"
+                onClick={() => setCurrent(current - 1)}
+                disabled={current === 0}
+                style={current === 0 ? { visibility: "hidden" } : undefined}
+              >
+                Back
+              </button>
               <button type="button" disabled={answers[current] === null} onClick={next}>
                 {current < QUESTIONS.length - 1 ? "Next" : "See my profile"}
               </button>
