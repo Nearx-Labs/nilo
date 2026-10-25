@@ -5,7 +5,6 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { config } from "../stellar";
 import { useWallet } from "../wallet";
 import {
-  BoltIcon,
   ChatIcon,
   ChevronIcon,
   HistoryIcon,
@@ -46,15 +45,38 @@ export function useQuickAction() {
     navigate(a.to, a.action ? { state: { action: a.action, at: Date.now() } satisfies ChatActionState } : undefined);
 }
 
+/** README section that explains why the decoded explanation can be trusted. */
+const TRUST_URL = "https://github.com/Nearx-Labs/nilo#why-you-can-trust-what-you-sign";
+
+/** Nilo's mark: a rounded "N" on a dark violet disc. */
+function LogoMark() {
+  return (
+    <svg className="logo" viewBox="0 0 40 40" width="40" height="40" aria-hidden="true">
+      <defs>
+        <linearGradient id="logo-n" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#c7c2ff" />
+          <stop offset="1" stopColor="#7b6cff" />
+        </linearGradient>
+      </defs>
+      <circle cx="20" cy="20" r="20" fill="#1c1f45" />
+      <path
+        d="M12.5 26V15.5a3.2 3.2 0 0 1 5.9-1.7l3.2 5.2 3.2 5.2a3.2 3.2 0 0 0 5.9-1.7V14"
+        fill="none"
+        stroke="url(#logo-n)"
+        strokeWidth="4.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function Topbar() {
   const { error } = useWallet();
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="logo" aria-hidden="true">
-          <i />
-          <i />
-        </span>
+        <LogoMark />
         <span className="brand-name">Nilo</span>
         <span className="tag">Payments agent</span>
       </div>
@@ -74,7 +96,7 @@ export function Topbar() {
 const NAV = [
   { to: "/send", label: "Chat", Icon: ChatIcon },
   { to: "/claim", label: "Claim", Icon: InboxIcon },
-  { to: "/sent", label: "Sent", Icon: HistoryIcon },
+  { to: "/sent", label: "Sent", Icon: SendIcon },
 ];
 
 export function Sidebar() {
@@ -88,12 +110,12 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="agent-card">
-        <span className="icon-tile green small-tile">
-          <BoltIcon width={16} height={16} />
+        <span className="icon-tile green">
+          <ShieldIcon />
         </span>
         <div>
           <strong>Payments agent</strong>
-          <p>Builds the transaction, explains it before you sign, and keeps you in control.</p>
+          <p>Secure, autonomous and always on your side.</p>
         </div>
       </div>
     </aside>
@@ -104,7 +126,7 @@ export function Rail() {
   const run = useQuickAction();
   return (
     <aside className="rail">
-      <div className="rail-card safe">
+      <a className="rail-card safe" href={TRUST_URL} target="_blank" rel="noreferrer">
         <span className="icon-tile green">
           <ShieldIcon />
         </span>
@@ -115,7 +137,8 @@ export function Rail() {
             after the deadline.
           </p>
         </div>
-      </div>
+        <ChevronIcon className="chevron" />
+      </a>
 
       <div className="rail-card list">
         <h3>Quick actions</h3>

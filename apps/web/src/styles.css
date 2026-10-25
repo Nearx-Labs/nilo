@@ -49,12 +49,7 @@ a { color: var(--accent-2); }
   position: sticky; top: 0; z-index: 10;
 }
 .brand { display: flex; align-items: center; gap: 12px; }
-.logo {
-  width: 40px; height: 40px; border-radius: 50%; background: var(--surface-3);
-  display: inline-flex; align-items: center; justify-content: center; gap: 2px;
-}
-.logo i { width: 9px; height: 9px; border-radius: 50%; background: #c7c2ff; display: block; }
-.logo i + i { background: var(--accent-2); }
+.logo { width: 44px; height: 44px; flex: none; display: block; }
 .brand-name { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
 .tag {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
@@ -90,12 +85,13 @@ a { color: var(--accent-2); }
   color: var(--text); text-decoration: none; font-weight: 500; opacity: 0.85;
 }
 .nav-item:hover { background: var(--surface); opacity: 1; }
-.nav-item.active { background: linear-gradient(90deg, #1e2147 0%, #191c3a 100%); opacity: 1; }
+.nav-item.active { background: linear-gradient(90deg, #262b6c 0%, #1f2458 100%); opacity: 1; font-weight: 600; }
 .agent-card {
   display: flex; gap: 14px; align-items: flex-start; padding: 18px; border-radius: 14px;
   background: var(--surface); border: 1px solid var(--border);
 }
-.agent-card strong { font-size: 14px; font-weight: 600; }
+.agent-card { align-items: center; }
+.agent-card strong { font-size: 15px; font-weight: 600; }
 .agent-card p { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
 
 .content { grid-area: content; padding: 40px 32px 64px; min-width: 0; }
@@ -115,6 +111,9 @@ a { color: var(--accent-2); }
 .rail-card p { margin: 6px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
 .rail-card.safe { background: linear-gradient(135deg, #0f2a26 0%, #10202a 100%); border-color: var(--ok-border); }
 .rail-card.safe strong { color: var(--ok); }
+a.rail-card { color: inherit; text-decoration: none; align-items: center; }
+a.rail-card:hover { border-color: #2a6a50; }
+.rail-card.safe .chevron { flex: none; color: var(--muted); }
 .rail-card.list { flex-direction: column; gap: 6px; padding: 22px 18px; }
 .rail-card.list h3 { font-size: 16px; font-weight: 600; padding: 0 2px 10px; }
 .rail-card .contacts { color: var(--faint); font-size: 12px; }
