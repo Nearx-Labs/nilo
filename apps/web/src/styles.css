@@ -243,36 +243,99 @@ a { color: var(--accent); }
   .voice-meter i { transition: none; }
 }
 
-/* ---------- Voice mode overlay (experimental) ---------- */
+/* ---------- Voice mode HUD (experimental) ---------- */
 /* Fills the chat panel (.view), not the window: the sidebar stays. Above the page header, under Pollar's dialogs. */
 .voice-overlay {
-  position: absolute; inset: 0; z-index: 6; container-type: size;
+  --hud: 56, 189, 255;
+  --orb: min(48cqw, 380px, 50cqh);
+  position: absolute; inset: 0; z-index: 6; container-type: size; overflow: hidden;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-  padding: max(20px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
-  background: radial-gradient(circle at 50% 45%, #0d1a2b 0%, #070b12 55%, #030508 100%);
-  color: #dfe8f5; animation: voice-overlay-in 0.25s ease-out;
+  padding: max(22px, env(safe-area-inset-top)) 16px max(22px, env(safe-area-inset-bottom));
+  color: rgb(var(--hud));
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(var(--hud), 0.14), transparent 60%),
+    linear-gradient(rgba(var(--hud), 0.035) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(90deg, rgba(var(--hud), 0.035) 1px, transparent 1px) 0 0 / 44px 44px,
+    #03070d;
+  animation: voice-overlay-in 0.25s ease-out;
+  transition: color 0.4s;
 }
-.voice-overlay.speaking { background: radial-gradient(circle at 50% 45%, #241a0c 0%, #0c0905 55%, #050403 100%); }
+.voice-overlay.speaking { --hud: 255, 178, 72; }
+.voice-overlay.connecting, .voice-overlay.closing { --hud: 120, 140, 165; }
 @keyframes voice-overlay-in { from { opacity: 0; } }
-.voice-overlay-tag { margin: 0; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #6f8099; }
-.voice-overlay-center { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
-.voice-orb { display: block; width: min(78cqw, 400px, 58cqh); aspect-ratio: 1; }
-.voice-overlay-status {
-  margin: 4px 0 0; font-size: 22px; font-weight: 300; letter-spacing: 0.08em; text-transform: uppercase;
-  color: #9fd2ff; transition: color 0.3s;
+
+.voice-tag { margin: 0; font-size: 12px; letter-spacing: 0.32em; text-transform: uppercase; color: rgba(var(--hud), 0.85); }
+
+.voice-stage { position: relative; width: 100%; height: var(--orb); display: flex; align-items: center; justify-content: center; }
+.voice-orb { position: relative; flex: none; width: var(--orb); aspect-ratio: 1; }
+.voice-orb canvas { display: block; width: 100%; height: 100%; }
+.voice-orb-icon { position: absolute; inset: 0; display: grid; place-items: center; color: rgb(var(--hud)); }
+.voice-orb-icon svg { width: calc(var(--orb) * 0.16); height: calc(var(--orb) * 0.16); filter: drop-shadow(0 0 8px rgba(var(--hud), 0.7)); }
+
+.voice-circuits { flex: 1; min-width: 0; height: 100%; color: rgb(var(--hud)); }
+.voice-circuits.right { transform: scaleX(-1); }
+.voice-traces path { fill: none; stroke: currentColor; stroke-width: 1.3; opacity: 0.45; }
+.voice-chips rect { fill: none; stroke: currentColor; stroke-width: 1; opacity: 0.35; }
+.voice-nodes circle { fill: #03070d; stroke: currentColor; stroke-width: 1.5; opacity: 0.8; }
+.voice-pulses path {
+  fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round;
+  stroke-dasharray: 7 93; filter: drop-shadow(0 0 3px currentColor);
+  animation: voice-pulse-in 2.4s linear infinite;
 }
-.voice-overlay.speaking .voice-overlay-status { color: #ffcf8a; }
-.voice-overlay.connecting .voice-overlay-status, .voice-overlay.closing .voice-overlay-status { color: #8a96a8; }
-.voice-overlay-task { min-height: 20px; margin: 0; font-size: 14px; color: #7f8ea3; }
-.voice-overlay-end {
-  width: 64px; height: 64px; padding: 0; border: none; border-radius: 50%;
+/* Data flows in to the core while listening, out of it while Nilo speaks. */
+@keyframes voice-pulse-in { from { stroke-dashoffset: -100; } to { stroke-dashoffset: 0; } }
+.voice-overlay.speaking .voice-pulses path { animation-direction: reverse; }
+.voice-overlay.connecting .voice-pulses path, .voice-overlay.closing .voice-pulses path { opacity: 0.3; }
+
+.voice-hud {
+  position: absolute; top: 0; padding: 8px 12px; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.18em; text-transform: uppercase; color: rgba(var(--hud), 0.9);
+  background:
+    linear-gradient(rgb(var(--hud)), rgb(var(--hud))) left top / 10px 1px no-repeat,
+    linear-gradient(rgb(var(--hud)), rgb(var(--hud))) left top / 1px 10px no-repeat,
+    linear-gradient(rgb(var(--hud)), rgb(var(--hud))) right bottom / 10px 1px no-repeat,
+    linear-gradient(rgb(var(--hud)), rgb(var(--hud))) right bottom / 1px 10px no-repeat;
+}
+.voice-hud.left { left: max(4%, 16px); }
+.voice-hud.right { right: max(4%, 16px); display: flex; flex-direction: column; gap: 6px; }
+.voice-hud-meter { display: flex; align-items: flex-end; gap: 3px; height: 12px; }
+.voice-hud-meter i {
+  --lvl: 0.15;
+  display: block; width: 3px; height: 100%; background: currentColor;
+  transform-origin: bottom; transform: scaleY(calc(0.15 + var(--lvl) * 0.85));
+}
+
+.voice-text { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.voice-title { margin: 0; font-size: 30px; font-weight: 400; color: #f2f6fb; letter-spacing: 0.01em; }
+.voice-subtitle { margin: 0; min-height: 16px; font-size: 12px; letter-spacing: 0.24em; text-transform: uppercase; color: rgba(var(--hud), 0.9); }
+
+.voice-cancel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.voice-cancel button {
+  position: relative; width: 60px; height: 60px; padding: 0; border: none; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  background: #e5484d; color: #fff; box-shadow: 0 6px 24px rgba(229, 72, 77, 0.35);
+  background: #e5484d; color: #fff;
+  box-shadow: 0 0 0 7px #03070d, 0 0 0 8px rgba(var(--hud), 0.35), 0 8px 28px rgba(229, 72, 77, 0.35);
 }
-.voice-overlay-end:hover:not(:disabled) { background: #f05358; }
-.voice-overlay-end:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
-.voice-overlay-end svg { width: 26px; height: 26px; }
-@media (prefers-reduced-motion: reduce) { .voice-overlay { animation: none; } }
+.voice-cancel button::before, .voice-cancel button::after {
+  content: ""; position: absolute; top: 50%; width: 52px; height: 1px; background: rgba(var(--hud), 0.55);
+}
+.voice-cancel button::before { right: calc(100% + 18px); }
+.voice-cancel button::after { left: calc(100% + 18px); }
+.voice-cancel button:hover:not(:disabled) { background: #f05358; }
+.voice-cancel button:focus-visible { outline: 2px solid #fff; outline-offset: 10px; }
+.voice-cancel button svg { width: 26px; height: 26px; }
+.voice-cancel span { font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; color: rgba(var(--hud), 0.85); }
+
+/* A narrow panel (phone): just the orb, bigger. */
+@container (max-width: 640px) {
+  .voice-circuits, .voice-hud, .voice-hud.right { display: none; }
+  .voice-stage { --orb: min(80cqw, 360px, 52cqh); }
+  .voice-title { font-size: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-overlay { animation: none; }
+  .voice-pulses path { animation: none; opacity: 0; }
+}
 
 /* ---------- Stroopy avatars ---------- */
 .stroopy { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; }
