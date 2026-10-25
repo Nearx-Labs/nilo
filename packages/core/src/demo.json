@@ -1,0 +1,19 @@
+{
+  "network": "TESTNET",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "horizonUrl": "https://horizon-testnet.stellar.org",
+  "assets": [
+    {
+      "code": "XLM"
+    },
+    {
+      "code": "TESTUSD",
+      "issuer": "GCG34EWEMV46P46KJQD7MAHR5NIDMJMT4HWCH2347KQCOMEUYM3XZTXJ"
+    }
+  ],
+  "contacts": {
+    "alice": "GAIPUSVC33UMX62K3D2YZSHPTFIMBH5WGKOOPUAHVB2S7KX3X2BTMOUZ",
+    "maria": "GBYYZ3KQ2GS7EMP3MSIPWHWZ2OVCMJOP3BJFT5WROEVOXJHCOQ6PO2ZK",
+    "bob": "GD7LWBTRWHXZ3WHZEGZTLG6CQDL7YBGJNS5A2PI6T3UDJJQ4S4ZOB4VJ"
+  }
+}

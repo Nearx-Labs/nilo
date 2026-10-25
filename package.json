@@ -1,0 +1,23 @@
+{
+  "name": "stellar-dots",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "setup:testnet": "tsx scripts/setup-testnet.ts",
+    "test": "npm test -w packages/core",
+    "dev:server": "npm run dev -w apps/server",
+    "dev:web": "npm run dev -w apps/web",
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
+    "demo:reset-maria": "tsx scripts/reset-maria.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
