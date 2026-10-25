@@ -1,11 +1,11 @@
 // Wallet access through Pollar: login (Freighter, Albedo, email, Google…) and
 // signing. The app only ever reads the public address; Pollar or the user's
 // wallet holds the keys.
-import { hasTrustline } from "@nilo/core";
+import { hasTrustline, toStroops } from "@nilo/core";
 import { type SubmitOutcome } from "@pollar/core";
 import { usePollar, walletNotReadyReason } from "@pollar/react";
-import { useEffect, useMemo, useRef } from "react";
-import { asSnapshot, config, friendbot, loadAccount } from "./stellar";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { FAUCET_BELOW, asSnapshot, config, friendbot, loadAccount, requestFaucet } from "./stellar";
 
 export class UserCancelled extends Error {}
 
@@ -47,6 +47,8 @@ function toHash(outcome: SubmitOutcome): string {
 
 // Dev only: ?watch=G... loads a public address without logging in, to inspect pages. Signing is disabled.
 const WATCH = import.meta.env.DEV ? new URLSearchParams(location.search).get("watch") : null;
+/** True in the dev-only watch mode: a public address with no session. */
+export const WATCHING = !!WATCH;
 
 export function useWallet() {
   const { wallets, isAuthenticated, openLoginModal, signAndSubmitTx, setTrustline } = usePollar();
@@ -81,6 +83,42 @@ export function useWallet() {
   }, [wallets, isAuthenticated, openLoginModal, signAndSubmitTx, setTrustline]);
 }
 
+/** What the account setup below is doing for an address, while it runs. */
+export type SetupStep = "account" | "trustline" | "usdc";
+/** Where the setup of an address stands: a running step, finished, or stopped at a step. */
+export type SetupStatus =
+  | { step: SetupStep }
+  | { step: "done" }
+  | { step: "failed"; at: SetupStep; message: string };
+const setupStatus = new Map<string, SetupStatus>();
+const setupListeners = new Set<() => void>();
+function setSetupStatus(address: string, status: SetupStatus) {
+  setupStatus.set(address, status);
+  setupListeners.forEach((l) => l());
+}
+function subscribeSetup(listener: () => void) {
+  setupListeners.add(listener);
+  return () => setupListeners.delete(listener);
+}
+
+/** Setup status of `address`; undefined while setup has not started (or never runs, e.g. external wallets). */
+export function useSetupStatus(address: string | null): SetupStatus | undefined {
+  return useSyncExternalStore(subscribeSetup, () => (address ? setupStatus.get(address) : undefined));
+}
+
+/** The setup step running for `address`, or null when there is none. */
+export function useAccountSetup(address: string | null): SetupStep | null {
+  const status = useSetupStatus(address);
+  return status && status.step !== "done" && status.step !== "failed" ? status.step : null;
+}
+
+/** What to tell the user while a setup step runs. */
+export const SETUP_TEXT: Record<SetupStep, string> = {
+  account: "Your account is still being created on testnet. Try again in a few seconds.",
+  trustline: "Your account is being enabled for USDC (confirm it in the Pollar window if it asks). Try again in a few seconds.",
+  usdc: "Your 100 test USDC is on its way from the faucet; it takes up to half a minute. Try again shortly.",
+};
+
 /**
  * Gets a new embedded wallet (email, Google…) ready to use on testnet:
  * 1. The account. Pollar normally creates it in the background, but a wallet can
@@ -89,8 +127,11 @@ export function useWallet() {
  *    and funds it: no signature needed, testnet only.
  * 2. The trustlines for the app's assets, which Pollar never adds on its own.
  *    Pollar's setTrustline builds and submits them server-side (its embedded
- *    signer only signs transactions whose source is the wallet itself). If the
- *    Pollar app has no app wallet to sponsor them, the account pays its own reserve.
+ *    signer only signs transactions whose source is the wallet itself), paid
+ *    from the account's own XLM.
+ * 3. Test USDC from the faucet, so a new user can send right away. Nilo's server
+ *    rate-limits it (one claim per account per day), and the Claim page keeps a
+ *    button for when this one is refused.
  * Runs once per address per page load, so a failure never turns into a stream of
  * signature prompts. External wallets are skipped for the same reason.
  */
@@ -102,6 +143,9 @@ export function useAutoTrustline() {
     if (provisioning === "CREATING" || provisioning === "FAILED") return;
     if (tried.current.has(address)) return;
     tried.current.add(address);
+    let step: SetupStep = "account";
+    const at = (next: SetupStep) => setSetupStatus(address, { step: (step = next) });
+    at("account");
     (async () => {
       let account = await loadAccount(address);
       if (!account) {
@@ -112,17 +156,33 @@ export function useAutoTrustline() {
       }
       for (const asset of config.assets) {
         if (!asset.issuer || hasTrustline(asSnapshot(account), asset)) continue;
-        const spec = { code: asset.code, issuer: asset.issuer };
-        let out = await setTrustline(spec);
-        // An app with no Pollar app wallet on this network can't sponsor: the account pays its own reserve.
-        if (out.status === "error" && /APP_WALLET_NOT_FOUND/.test(out.details ?? "")) {
-          out = await setTrustline(spec, { skipSponsorship: true });
-        }
+        at("trustline");
+        // Self-paid: the account holds XLM for the 0.5 XLM reserve, and Pollar asks to confirm each
+        // attempt, so trying a sponsored one first (refused on this app: APP_WALLET_NOT_FOUND) meant two prompts.
+        const out = await setTrustline({ code: asset.code, issuer: asset.issuer }, { skipSponsorship: true });
         if (out.status === "error") throw new Error(`${asset.code} trustline: ${out.details ?? "refused"}`);
       }
+      const usdc = config.assets.find((a) => a.code === "USDC" && a.issuer);
+      if (usdc) {
+        // A trustline just added can take a ledger or two to show up on Horizon.
+        let line;
+        for (let i = 0; i < 4 && !line; i++) {
+          if (i) await new Promise((r) => setTimeout(r, 2500));
+          const fresh = await loadAccount(address);
+          line = fresh?.balances.find((b) => "asset_code" in b && b.asset_code === usdc.code && b.asset_issuer === usdc.issuer);
+        }
+        if (line && toStroops(line.balance) < toStroops(FAUCET_BELOW)) {
+          at("usdc");
+          console.info(`Getting test USDC for ${address}...`);
+          console.info(`Got ${await requestFaucet(address)} test USDC.`);
+        }
+      }
+      setSetupStatus(address, { step: "done" });
     })().catch((e) => {
-      // Not fatal: claiming a payment adds the trustline too.
-      console.warn("Could not set up the account:", (e as Error).message ?? e);
+      // Not fatal: claiming a payment adds the trustline too, and the Claim page offers the faucet.
+      const message = (e as Error).message ?? String(e);
+      console.warn("Could not set up the account:", message);
+      setSetupStatus(address, { step: "failed", at: step, message });
     });
   }, [address, custody, provisioning, fundingMode, setTrustline]);
 }

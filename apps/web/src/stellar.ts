@@ -36,6 +36,9 @@ export async function requestSponsoredClaim(balanceId: string, claimant: string)
   return body.xdr;
 }
 
+/** Test USDC is offered below this balance (the server refuses at or above it). */
+export const FAUCET_BELOW = "50";
+
 /**
  * Asks the server for test USDC from the Sozu Faucet. The server rate-limits it;
  * a refusal throws with the reason and, when known, `retryAt` (unix ms).

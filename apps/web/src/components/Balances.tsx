@@ -10,7 +10,7 @@ import {
   viewBalance,
 } from "@nilo/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { asSnapshot, config, friendbot, horizon, loadAccount, requestFaucet, requestSponsoredClaim } from "../stellar";
+import { FAUCET_BELOW, asSnapshot, config, friendbot, horizon, loadAccount, requestFaucet, requestSponsoredClaim } from "../stellar";
 import { formatLocal, formatRelative, short, useNow } from "../time";
 import { useWallet } from "../wallet";
 import { EmptyWallet } from "./EmptyWallet";
@@ -21,8 +21,6 @@ import { type Prepared, SignPanel } from "./SignPanel";
 const CLOCK_MARGIN = 5;
 /** How often the list reloads from Horizon on its own, so new payments show up without a click. */
 const POLL_MS = 15_000;
-/** The faucet is offered below this USDC balance (the server refuses at or above it). */
-const FAUCET_BELOW = "50";
 
 export function useBalances(address: string | null) {
   const [records, setRecords] = useState<HorizonClaimableBalance[]>([]);

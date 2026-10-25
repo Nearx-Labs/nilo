@@ -36,7 +36,7 @@ import { type Prepared, SignPanel } from "../components/SignPanel";
 import { getQuote, shortContract } from "../prices";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
-import { useWallet } from "../wallet";
+import { SETUP_TEXT, useAccountSetup, useWallet } from "../wallet";
 
 type ExtractResponse =
   | { status: "complete"; intent: SendIntent }
@@ -140,6 +140,7 @@ async function validateFresh(intent: SendIntent, address: string): Promise<Resol
 
 export function ChatPage({ bot }: { bot: Bot }) {
   const { address, connect, error: walletError, notReady } = useWallet();
+  const setup = useAccountSetup(address);
   const { saveChat, deleteBot } = useBots();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadSettled(bot.id));
   const [draft, setDraft] = useState("");
@@ -230,6 +231,10 @@ export function ChatPage({ bot }: { bot: Bot }) {
       say(notReady);
       return;
     }
+    if (setup === "account" || setup === "trustline") {
+      say(SETUP_TEXT[setup]);
+      return;
+    }
     try {
       const account = await loadAccount(address);
       if (!account) {
@@ -246,7 +251,8 @@ export function ChatPage({ bot }: { bot: Bot }) {
       );
       say(
         `Your available funds:\n${lines.map((l) => `• ${l}`).join("\n")}` +
-          (lines.some((l) => l.includes("≈")) ? "\n\nValues from the Reflector oracle on testnet." : ""),
+          (lines.some((l) => l.includes("≈")) ? "\n\nValues from the Reflector oracle on testnet." : "") +
+          (setup === "usdc" ? `\n\n${SETUP_TEXT.usdc}` : ""),
       );
     } catch (e) {
       say(`I couldn't load your balance: ${(e as Error).message}`);
@@ -262,6 +268,10 @@ export function ChatPage({ bot }: { bot: Bot }) {
     }
     if (notReady) {
       say(notReady);
+      return;
+    }
+    if (setup) {
+      say(SETUP_TEXT[setup]);
       return;
     }
     try {

@@ -15,7 +15,9 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { CreateBotModal } from "../bots/CreateBotModal";
 import { DEFAULT_BOT, DEFAULT_PREVIEW, useBots } from "../bots/store";
 import { StroopyAvatar } from "../bots/StroopyAvatar";
-import { useAutoTrustline, useWallet } from "../wallet";
+import { profileLabel, useProfile } from "../profile";
+import { WATCHING, useAutoTrustline, useWallet } from "../wallet";
+import { Onboarding } from "./Onboarding";
 import {
   ChartIcon,
   CoinsIcon,
@@ -78,6 +80,13 @@ export function Shell({ children }: { children: ReactNode }) {
   const wasOpen = useRef(false);
   const { pathname } = useLocation();
   useAutoTrustline();
+  const { address } = useWallet();
+  const [profile] = useProfile(address);
+  // First sign-in of an address: ask for the profile while its account is set up.
+  const [onboarding, setOnboarding] = useState<"first" | "edit" | null>(null);
+  useEffect(() => {
+    if (address && !WATCHING && !profile) setOnboarding("first");
+  }, [address, profile]);
 
   useEffect(() => setDrawerOpen(false), [pathname]);
   // Move focus into the drawer when it opens, and back to the menu button when it closes.
@@ -107,18 +116,35 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <ShellContext.Provider value={{ openDrawer: () => setDrawerOpen(true), drawerOpen }}>
       <div className={`app${drawerOpen ? " drawer-open" : ""}`}>
-        <Sidebar ref={sidebar} onCreate={openCreate} onNavigate={() => setDrawerOpen(false)} />
+        <Sidebar
+          ref={sidebar}
+          onCreate={openCreate}
+          onNavigate={() => setDrawerOpen(false)}
+          onProfile={() => setOnboarding("edit")}
+        />
         <div className="scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
         <main className="main">{children}</main>
         {creating && <CreateBotModal onClose={closeCreate} />}
+        {onboarding && <Onboarding mode={onboarding} onClose={() => setOnboarding(null)} />}
       </div>
     </ShellContext.Provider>
   );
 }
 
-function Sidebar({ ref, onCreate, onNavigate }: { ref: Ref<HTMLElement>; onCreate: () => void; onNavigate: () => void }) {
+function Sidebar({
+  ref,
+  onCreate,
+  onNavigate,
+  onProfile,
+}: {
+  ref: Ref<HTMLElement>;
+  onCreate: () => void;
+  onNavigate: () => void;
+  onProfile: () => void;
+}) {
   const { bots, previews } = useBots();
-  const { error } = useWallet();
+  const { error, address } = useWallet();
+  const [profile] = useProfile(address);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -197,6 +223,11 @@ function Sidebar({ ref, onCreate, onNavigate }: { ref: Ref<HTMLElement>; onCreat
       </nav>
 
       {error && <p className="error small side-error">{error}</p>}
+      {profile && (
+        <button type="button" className="profile-chip" onClick={onProfile} title="Change your investor profile">
+          Profile: <strong>{profileLabel(profile)}</strong>
+        </button>
+      )}
       <div className="side-foot">
         <div className="me">
           <span className="me-avatar">
