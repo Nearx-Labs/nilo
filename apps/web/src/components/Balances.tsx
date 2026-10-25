@@ -13,10 +13,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { asSnapshot, config, friendbot, horizon, loadAccount, requestSponsoredClaim } from "../stellar";
 import { formatLocal, formatRelative, short, useNow } from "../time";
 import { useWallet } from "../wallet";
+import { EmptyWallet } from "./EmptyWallet";
+import { RefreshIcon } from "./icons";
 import { type Prepared, SignPanel } from "./SignPanel";
 
 /** Ledger close times can trail the local clock by a few seconds. */
 const CLOCK_MARGIN = 5;
+/** How often the list reloads from Horizon on its own, so new payments show up without a click. */
+const POLL_MS = 15_000;
 
 export function useBalances(address: string | null) {
   const [records, setRecords] = useState<HorizonClaimableBalance[]>([]);
@@ -37,6 +41,8 @@ export function useBalances(address: string | null) {
   }, [address]);
   useEffect(() => {
     refresh();
+    const id = setInterval(refresh, POLL_MS);
+    return () => clearInterval(id);
   }, [refresh]);
   return { records, error, loading, refresh };
 }
@@ -75,16 +81,29 @@ export function BalanceList({ role }: { role: BalanceView["role"] }) {
   return (
     <div className="stack">
       <div className="row">
-        <button className="secondary" onClick={refresh} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
+        <button
+          className="connected"
+          onClick={refresh}
+          disabled={loading}
+          title="Connected. The list refreshes on its own; click to refresh now."
+        >
+          <RefreshIcon width={16} height={16} className={loading ? "spin" : undefined} /> Connected
         </button>
-        <span className="muted small">Connected as {short(address)}</span>
+        <span className="muted small">as {short(address)}</span>
       </div>
       {error && <p className="error">{error}</p>}
       <AccountCheck address={address} funding={funding} setFunding={setFunding} onFunded={refresh} />
       {message && <p className="success">{message}</p>}
-      {views.length === 0 && !loading && (
-        <p className="muted">{role === "recipient" ? "No pending payments for you." : "No pending payments you sent."}</p>
+      {views.length === 0 && !(loading && records.length === 0) && (
+        <div className="panel empty">
+          <EmptyWallet />
+          <strong>{role === "recipient" ? "No pending payments for you." : "No pending payments you sent."}</strong>
+          <p className="muted">
+            {role === "recipient"
+              ? "When someone sends you a payment, it will appear here and you'll be able to claim it."
+              : "When you send a payment, it stays here until it is claimed or you recover it."}
+          </p>
+        </div>
       )}
       {views.map((v) => (
         <BalanceRow
