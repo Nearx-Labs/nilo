@@ -22,3 +22,18 @@ export const PriceQuerySchema = z.object({
   quoteCurrency: z.string().min(1),
 });
 export type PriceQuery = z.infer<typeof PriceQuerySchema>;
+
+/** Which side of the user's pending payments a voice request is about. */
+export const PaymentRoleSchema = z.enum(["recipient", "sender"]);
+
+/** How a spoken request points at one of the user's pending payments (see pickBalances). Null fields are not used. */
+export const BalanceSelectorSchema = z.object({
+  /** Position (from 1) in the list the user was last given. */
+  index: z.number().int().nullable(),
+  /** The other side of the payment: a contact nickname or a full address. */
+  counterparty: z.string().nullable(),
+  amount: z.string().nullable(),
+  /** Asset code. */
+  asset: z.string().nullable(),
+});
+export type BalanceSelector = z.infer<typeof BalanceSelectorSchema>;

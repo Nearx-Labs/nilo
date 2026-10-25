@@ -1,5 +1,6 @@
 import type { Claimant } from "@stellar/stellar-sdk";
-import { type AssetSpec, parseHorizonAsset } from "./config";
+import { type AppConfig, type AssetSpec, parseHorizonAsset, toStroops } from "./config";
+import type { BalanceSelector } from "./intent";
 
 type XdrPredicate = Claimant["predicate"];
 
@@ -95,4 +96,23 @@ export function viewBalance(b: HorizonClaimableBalance, me: string, nowSec: numb
     status,
     claimableNow,
   };
+}
+
+/** The payments in `views` that match every given field of `sel`: all of them when none is given. */
+export function pickBalances(views: BalanceView[], sel: BalanceSelector, config: AppConfig): BalanceView[] {
+  if (sel.index !== null) {
+    const v = Number.isInteger(sel.index) && sel.index >= 1 ? views[sel.index - 1] : undefined;
+    views = v ? [v] : [];
+  }
+  const who = sel.counterparty?.trim();
+  const address = who ? (config.contacts[who.toLowerCase()] ?? who.toUpperCase()) : null;
+  const amount = sel.amount?.trim();
+  if (amount && !/^\d+(\.\d{1,7})?$/.test(amount)) return [];
+  const code = sel.asset?.trim().toUpperCase();
+  return views.filter(
+    (v) =>
+      (!address || (v.role === "recipient" ? v.sender : v.recipient) === address) &&
+      (!code || v.asset.code === code) &&
+      (!amount || toStroops(v.amount) === toStroops(amount)),
+  );
 }

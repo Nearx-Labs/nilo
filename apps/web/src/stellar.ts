@@ -1,5 +1,5 @@
 // Read-only Horizon access. Signing goes through Pollar (see wallet.tsx).
-import { defaultConfig as config, type AccountSnapshot } from "@nilo/core";
+import { defaultConfig as config, type AccountSnapshot, type HorizonClaimableBalance } from "@nilo/core";
 import { Horizon } from "@stellar/stellar-sdk";
 
 export { config };
@@ -13,6 +13,12 @@ export async function loadAccount(address: string) {
     if ((e as { response?: { status?: number } }).response?.status === 404) return null;
     throw e;
   }
+}
+
+/** Claimable balances where the address is a claimant, newest first. */
+export async function fetchClaimable(address: string): Promise<HorizonClaimableBalance[]> {
+  const page = await horizon.claimableBalances().claimant(address).limit(100).order("desc").call();
+  return page.records as unknown as HorizonClaimableBalance[];
 }
 
 /** Testnet only: creates and funds an account that is not on the ledger yet. */

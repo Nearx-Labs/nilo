@@ -1,9 +1,10 @@
 // Voice mode: a GPT-Live session the browser joins over WebRTC. This server holds the key,
 // creates the session and returns the SDP answer. The voice model only talks; a Responses
 // backend turns what was said into calls to tools the browser runs: the text chat's send and
-// price requests, plus the balance. The browser validates them again, reads prices and balances
-// itself and shows the usual review: nothing is built or signed from here.
-import { VoiceProofSchema, verifyVoiceProof } from "@nilo/core";
+// price requests, plus the balance, pending payments (list, claim, recover) and test USDC.
+// The browser validates them again, reads the ledger and prices itself and shows the usual
+// review: nothing is built or signed from here.
+import { VoiceProofSchema, defaultConfig as config, verifyVoiceProof } from "@nilo/core";
 import OpenAI from "openai";
 import { z } from "zod";
 
@@ -13,18 +14,41 @@ const VOICE = process.env.OPENAI_VOICE ?? "marin";
 const FRONTEND = `You are Nilo, a payments assistant on Stellar testnet, talking out loud.
 Speak in the user's language (English or Portuguese), in short sentences.
 For anything about sending money, prices, amounts, balances or addresses, delegate. Never say a number, price, address or result you did not get back from the backend.
-The user sees no text while you talk: say results out loud in full, never point them to the screen. The one exception is a payment: when the backend says a review is on screen, it really is shown, so tell the user to check it and sign there. You cannot sign or send anything yourself.
+The user sees no text while you talk: say results out loud in full, never point them to the screen. The one exception is a review (a payment, a claim or a recovery): when the backend says a review is on screen, it really is shown, so tell the user to check it and sign there. You cannot sign, send or claim anything yourself.
 Never read a full Stellar address aloud; say its first and last four characters.`;
 
-const BACKEND = `You turn a spoken request into one of three tool calls. You never build, sign or describe transactions, and you never state prices or balances yourself.
+const BACKEND = `You turn a spoken request into a tool call. You never build, sign or describe transactions, and you never state prices, balances or payments yourself.
 
 - prepare_send: the user wants to send an amount to someone, who has a limited time to claim it.
 - get_price: the user asks what an asset or currency is worth.
 - get_balance: the user asks how much they have ("qual é meu saldo?", "what's my balance?").
+- list_payments: the user asks about pending payments: sent to them and waiting to be claimed (role "recipient"), or sent by them and not claimed yet (role "sender").
+- prepare_claim: the user wants to claim (receive) a payment sent to them.
+- prepare_recover: the user wants back a payment they sent that nobody claimed before its deadline.
+- request_test_usdc: the user asks for free test USDC.
 
+Contacts the user can name: ${Object.keys(config.contacts).join(", ")}. Anyone else is a full Stellar address starting with G.
+For prepare_claim and prepare_recover, fill only what the user said to pick the payment: its number in the last list read to them, the other person, the amount or the asset. Leave the rest null; with all null the app picks the only one there is, or asks back.
 Speech transcripts can be imperfect. Use earlier turns to fill fields the user already gave. If a field is missing or unclear, ask a short question for only that field instead of calling a tool. Never guess a missing value.
-If the request is none of these, say briefly that you can send claimable payments, check prices and check the balance.
-After a tool returns, pass on what it says in one or two sentences. Say amounts the way the tool gives them: balances as money for each asset ("US$ 168 in XLM and US$ 100 in USDC") and the total, not token units, and never a long decimal digit by digit. The user sees no text in voice mode, so never say the amounts are on screen. Only a payment review is shown: if the tool says a review is on screen, ask the user to check it and sign there.`;
+If the request is none of these, say briefly that you can send claimable payments, list, claim and recover pending payments, check prices and the balance, and get test USDC.
+After a tool returns, pass on what it says in one or two sentences; for a list, say each payment briefly with its number. Say amounts the way the tool gives them: as money for each asset ("US$ 168 in XLM and US$ 100 in USDC"), not token units, and never a long decimal digit by digit. The user sees no text in voice mode, so never say the amounts are on screen. Only a review is shown: if the tool says a review is on screen, ask the user to check it and sign there.
+Developer messages report what the user did on screen (signed or cancelled a review): say it in one short sentence.`;
+
+/** Arguments that point at one pending payment. Strict mode: every field is required, null when not said. */
+const PAYMENT_SELECTOR = {
+  type: "object",
+  additionalProperties: false,
+  required: ["index", "counterparty", "amount", "asset"],
+  properties: {
+    index: { type: ["integer", "null"], description: "Its number in the last list read to the user, from 1. Otherwise null." },
+    counterparty: {
+      type: ["string", "null"],
+      description: 'The other person: a contact nickname (e.g. "maria") or a full Stellar address starting with G. Otherwise null.',
+    },
+    amount: { type: ["string", "null"], description: 'The amount as said, as a decimal string with "." (e.g. "50"). Otherwise null.' },
+    asset: { type: ["string", "null"], description: 'Asset code, uppercased (e.g. "USDC"). Otherwise null.' },
+  },
+};
 
 const TOOLS = [
   {
@@ -69,6 +93,45 @@ const TOOLS = [
         quoteCurrency: { type: "string", description: 'ISO code to express it in ("reais" -> "BRL"); "USD" if not said.' },
       },
     },
+  },
+  {
+    type: "function" as const,
+    name: "list_payments",
+    description: "Read the user's pending payments on one side, numbered, with their amounts, the other person and the deadline.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["role"],
+      properties: {
+        role: {
+          type: "string",
+          enum: ["recipient", "sender"],
+          description: '"recipient": payments sent to the user. "sender": payments the user sent.',
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    name: "prepare_claim",
+    description: "Show the user the claim of a payment sent to them, to review and sign. The app checks it can be claimed first.",
+    strict: true,
+    parameters: PAYMENT_SELECTOR,
+  },
+  {
+    type: "function" as const,
+    name: "prepare_recover",
+    description: "Show the user the recovery of a payment they sent that nobody claimed before the deadline, to review and sign.",
+    strict: true,
+    parameters: PAYMENT_SELECTOR,
+  },
+  {
+    type: "function" as const,
+    name: "request_test_usdc",
+    description: "Ask the testnet faucet for free test USDC for the user. Limited to accounts with little USDC, once a day.",
+    strict: true,
+    parameters: { type: "object", additionalProperties: false, required: [], properties: {} },
   },
 ];
 

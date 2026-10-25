@@ -43,6 +43,8 @@ export function useVoiceSession(handlers: VoiceHandlers) {
   h.current = handlers;
   const teardown = useRef<(() => void) | null>(null);
   const hangup = useRef<(() => void) | null>(null);
+  /** Sends a client event on the open session's data channel; null while there is none. */
+  const sender = useRef<((event: object) => boolean) | null>(null);
   /** Read-only taps on the two audio streams, for the level meter. Not connected to the speakers. */
   const meters = useRef<{ mic: AnalyserNode | null; out: AnalyserNode | null }>({ mic: null, out: null });
   const buf = useRef(new Uint8Array(256));
@@ -89,7 +91,7 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       audio.srcObject = null;
       meters.current = { mic: null, out: null };
       ctx.close().catch(() => {});
-      teardown.current = hangup.current = null;
+      teardown.current = hangup.current = sender.current = null;
       setState("idle");
     };
     /** Leaving (unmount, other page): ask OpenAI to close, give the message a moment to go out, then drop the connection. */
@@ -101,6 +103,7 @@ export function useVoiceSession(handlers: VoiceHandlers) {
     const onPageHide = () => send({ type: "session.close" });
     window.addEventListener("pagehide", onPageHide);
     teardown.current = abandon;
+    sender.current = send;
     hangup.current = () => {
       setState("closing");
       if (send({ type: "session.close" })) {
@@ -233,6 +236,15 @@ export function useVoiceSession(handlers: VoiceHandlers) {
     state,
     start,
     stop: () => (hangup.current ?? teardown.current)?.(),
+    /**
+     * Tells the backend what happened on screen (a review signed or cancelled) and asks it to
+     * respond, so the voice says it. Does nothing without an open session.
+     */
+    notify: (text: string) => {
+      if (sender.current?.({ type: "response.item.create", item: { type: "message", role: "developer", content: text } })) {
+        sender.current({ type: "response.create" });
+      }
+    },
     levels: (): VoiceLevels => ({ mic: rms(meters.current.mic, buf.current), out: rms(meters.current.out, buf.current) }),
     /** Fills `into` with the frequency spectrum of one side (128 bins, 0 to 255); false before it has audio. */
     spectrum: (side: "mic" | "out", into: Uint8Array<ArrayBuffer>): boolean => {
