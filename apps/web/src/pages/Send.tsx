@@ -1,8 +1,10 @@
 import {
   FIAT_SIGNS,
   type PriceQuery,
+  PriceQuerySchema,
   type ResolvedIntent,
   type SendIntent,
+  SendIntentSchema,
   assetToFiat,
   buildSendTx,
   crossRate,
@@ -36,6 +38,7 @@ import { type Prepared, SignPanel } from "../components/SignPanel";
 import { getQuote, shortContract } from "../prices";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
+import { useVoiceSession } from "../voice";
 import { SETUP_TEXT, useAccountSetup, useWallet } from "../wallet";
 
 type ExtractResponse =
@@ -45,6 +48,12 @@ type ExtractResponse =
   | { status: "error"; message: string };
 
 const EXAMPLE = "Send 50 USDC to maria, she has 2 minutes";
+const VOICE_LABEL = {
+  idle: "Voice mode",
+  connecting: "Connecting voice mode… (tap to cancel)",
+  live: "End voice mode",
+  closing: "Ending voice mode…",
+} as const;
 /** Pixels from the bottom that still count as "following" the conversation. */
 const STICK_PX = 80;
 
@@ -158,7 +167,17 @@ export function ChatPage({ bot }: { bot: Bot }) {
   // The welcome screen reads from the top; only a conversation (or the form) follows the bottom.
   const idle = fresh && mode === "chat";
 
-  const say =(content: string) => setMessages((m) => [...m, { role: "assistant", content }]);
+  /** While a voice tool call runs, what the app says is also its result, spoken back. */
+  const voiceOut = useRef<string[] | null>(null);
+  const say = (content: string) => {
+    voiceOut.current?.push(content);
+    setMessages((m) => [...m, { role: "assistant", content }]);
+  };
+  const voice = useVoiceSession({
+    onToolCall: runVoiceTool,
+    onTranscript: (role, content) => setMessages((m) => [...m, { role, content }]),
+    onError: say,
+  });
   const input = useRef<HTMLTextAreaElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const flow = useRef<HTMLDivElement>(null);
@@ -259,20 +278,21 @@ export function ChatPage({ bot }: { bot: Bot }) {
     }
   }
 
-  async function startReview(intent: SendIntent) {
+  /** True when the review is on screen. */
+  async function startReview(intent: SendIntent): Promise<boolean> {
     const from = address;
     if (!from) {
       say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then try again.");
       connect();
-      return;
+      return false;
     }
     if (notReady) {
       say(notReady);
-      return;
+      return false;
     }
     if (setup) {
       say(SETUP_TEXT[setup]);
-      return;
+      return false;
     }
     try {
       let conversion: Conversion | undefined;
@@ -293,8 +313,34 @@ export function ChatPage({ bot }: { bot: Bot }) {
         : "This address does not exist on testnet. Nobody may be able to claim it; you can recover the funds after the deadline.";
       setSent(null);
       setPending({ intent, resolved, warning, conversion, approx });
+      return true;
     } catch (e) {
       say(`I can't prepare that: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  /** A tool the voice backend asked for. Its arguments are untrusted, like /api/extract's output. */
+  async function runVoiceTool(name: string, args: unknown): Promise<string> {
+    voiceOut.current = [];
+    try {
+      if (name === "get_price") {
+        const query = PriceQuerySchema.safeParse(args);
+        if (!query.success) return "That price request was incomplete.";
+        await answerPrice(query.data);
+      } else if (name === "prepare_send") {
+        const raw = (args ?? {}) as Record<string, unknown>;
+        const intent = SendIntentSchema.safeParse({ ...raw, fiatCurrency: raw.fiatCurrency ?? undefined });
+        if (!intent.success) return "That payment request was incomplete.";
+        if (await startReview(intent.data)) {
+          voiceOut.current.push("The review is on screen. Nothing is sent until the user checks it and taps Sign and send.");
+        }
+      } else {
+        return `There is no tool called ${name}.`;
+      }
+      return voiceOut.current.join("\n");
+    } finally {
+      voiceOut.current = null;
     }
   }
 
@@ -575,7 +621,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
                 onChat();
               }
             }}
-            placeholder={`Message ${bot.name}`}
+            placeholder={voice.state === "live" ? `Listening… talk to ${bot.name}` : `Message ${bot.name}`}
             readOnly={busy}
             disabled={!!pending}
             aria-label="Message"
@@ -591,18 +637,19 @@ export function ChatPage({ bot }: { bot: Bot }) {
           >
             <MicIcon />
           </button>
-          {hasText ? (
+          {hasText && voice.state === "idle" ? (
             <button type="submit" className="round-send" disabled={busy || !!pending} aria-label="Send" title="Send">
               <ArrowUpIcon />
             </button>
           ) : (
             <button
               type="button"
-              className="round-send voice"
-              disabled
-              aria-disabled="true"
-              title="Voice mode — coming soon"
-              aria-label="Voice mode — coming soon"
+              className={`round-send voice ${voice.state}`}
+              onClick={voice.state === "idle" ? voice.start : voice.stop}
+              disabled={voice.state === "closing"}
+              aria-pressed={voice.state !== "idle"}
+              title={VOICE_LABEL[voice.state]}
+              aria-label={VOICE_LABEL[voice.state]}
             >
               <WaveformIcon />
             </button>

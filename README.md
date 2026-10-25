@@ -85,7 +85,7 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 
 | Guarantee | How |
 |---|---|
-| The model never sees keys or builds transactions | It receives only the chat text and returns a schema-validated JSON intent. |
+| The model never sees keys or builds transactions | It receives only the chat text (or, in voice mode, the speech) and returns a schema-validated intent. |
 | On-chain data can't inject instructions into the model | The model never reads memos, asset names or anything else from the ledger. |
 | The explanation matches the transaction | It is generated from the final XDR by fixed templates, then compared field by field with the validated intent. A mismatch blocks signing. |
 | Nilo never holds your funds or keys | Signing happens in the user's wallet: Freighter or Albedo, or a Pollar email/Google wallet. The app only knows users' public addresses. |
@@ -131,8 +131,9 @@ you sign is the asset amount, explained from the XDR as before.
 
    | Variable | Where it comes from |
    |---|---|
-   | `OPENAI_API_KEY` | OpenAI. Used only by the chat endpoint; the form (the **+** button next to the chat box) works without it. |
+   | `OPENAI_API_KEY` | OpenAI. Used only by the chat and voice endpoints; the form (the **+** button next to the chat box) works without it. |
    | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. |
+   | `OPENAI_VOICE_BACKEND_MODEL`, `OPENAI_VOICE` | Optional, for voice mode (GPT-Live, needs a paid API tier). The model that turns speech into a send or price request defaults to `OPENAI_MODEL`; the voice to `marin`. |
    | `VITE_POLLAR_API_KEY` | Pollar dashboard → Build → API Keys → **publishable** key (`pub_testnet_…`). Never use a secret key here: `VITE_*` values are shipped to the browser. |
    | `SPONSOR_SECRET` | Written for you by step 4. Testnet secret of the account that pays claim fees and trustline reserves. Server-side only. |
 

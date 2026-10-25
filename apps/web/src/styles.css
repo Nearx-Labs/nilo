@@ -218,6 +218,13 @@ a { color: var(--accent); }
 .round-send:hover:not(:disabled) { background: #fff; }
 .icon-btn.voice:disabled { opacity: 0.35; cursor: not-allowed; }
 .round-send.voice:disabled { opacity: 1; cursor: not-allowed; color: #555; }
+.round-send.voice.connecting, .round-send.voice.closing { background: #3a3a3a; color: var(--text); }
+.round-send.voice.live { background: var(--accent); color: #fff; animation: voice-pulse 1.6s ease-in-out infinite; }
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .round-send.voice.live { animation: none; } }
 
 /* ---------- Stroopy avatars ---------- */
 .stroopy { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; }

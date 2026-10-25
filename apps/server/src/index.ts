@@ -2,12 +2,20 @@ import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { serveStatic } from "@hono/node-server/serve-static";
 import OpenAI from "openai";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { ChatSchema, extractIntent } from "./extract";
 import { FaucetError, FaucetRequest, requestFaucet } from "./faucet";
 import { SponsorError, SponsorRequest, TrustlineRequest, sponsorClaim, sponsorTrustline } from "./sponsor";
+import { VoiceError, VoiceRequest, createVoiceSession } from "./voice";
 
 const app = new Hono();
+
+// Behind a reverse proxy every request comes from the proxy: set TRUST_PROXY=1 to use X-Forwarded-For.
+// Its last entry is the one our proxy added; earlier ones come from the client and can be forged.
+function clientIp(c: Context): string {
+  const forwarded = process.env.TRUST_PROXY === "1" ? c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() : undefined;
+  return forwarded || getConnInfo(c).remote.address || "unknown";
+}
 
 app.post("/api/extract", async (c) => {
   const body = await c.req.json().catch(() => null);
@@ -54,16 +62,30 @@ app.post("/api/sponsor-trustline", async (c) => {
 app.post("/api/faucet", async (c) => {
   const parsed = FaucetRequest.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ message: "Invalid address." }, 400);
-  // Behind a reverse proxy every request comes from the proxy: set TRUST_PROXY=1 to use X-Forwarded-For.
-  // Its last entry is the one our proxy added; earlier ones come from the client and can be forged.
-  const forwarded = process.env.TRUST_PROXY === "1" ? c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() : undefined;
-  const ip = forwarded || getConnInfo(c).remote.address || "unknown";
   try {
-    return c.json(await requestFaucet(parsed.data, ip));
+    return c.json(await requestFaucet(parsed.data, clientIp(c)));
   } catch (e) {
     if (e instanceof FaucetError) return c.json({ message: e.message, retryAt: e.retryAt }, e.status);
     console.error("faucet failed:", e);
     return c.json({ message: "Could not reach the test USDC faucet right now." }, 502);
+  }
+});
+
+app.post("/api/voice/session", async (c) => {
+  const parsed = VoiceRequest.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ message: "Invalid connection offer." }, 400);
+  try {
+    return c.json(await createVoiceSession(parsed.data, clientIp(c)));
+  } catch (e) {
+    if (e instanceof VoiceError) return c.json({ message: e.message }, e.status);
+    console.error("voice session failed:", e);
+    const message =
+      e instanceof OpenAI.AuthenticationError || e instanceof OpenAI.PermissionDeniedError
+        ? "The server's OpenAI key can't use voice mode."
+        : e instanceof OpenAI.RateLimitError
+          ? "Voice mode is rate limited. Try again in a moment."
+          : "Voice mode is unavailable right now.";
+    return c.json({ message }, 502);
   }
 });
 
