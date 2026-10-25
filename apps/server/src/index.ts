@@ -5,7 +5,7 @@ import OpenAI from "openai";
 import { type Context, Hono } from "hono";
 import { ChatSchema, extractIntent } from "./extract";
 import { FaucetError, FaucetRequest, requestFaucet } from "./faucet";
-import { SponsorError, SponsorRequest, TrustlineRequest, sponsorClaim, sponsorTrustline } from "./sponsor";
+import { SponsorError, SponsorRequest, sponsorClaim } from "./sponsor";
 import { VoiceError, VoiceRequest, createVoiceSession } from "./voice";
 
 const app = new Hono();
@@ -44,18 +44,6 @@ app.post("/api/sponsor-claim", async (c) => {
     if (e instanceof SponsorError) return c.json({ message: e.message }, e.status);
     console.error("sponsor-claim failed:", e);
     return c.json({ message: "Could not prepare a sponsored claim right now." }, 502);
-  }
-});
-
-app.post("/api/sponsor-trustline", async (c) => {
-  const parsed = TrustlineRequest.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ message: "Invalid address." }, 400);
-  try {
-    return c.json(await sponsorTrustline(parsed.data));
-  } catch (e) {
-    if (e instanceof SponsorError) return c.json({ message: e.message }, e.status);
-    console.error("sponsor-trustline failed:", e);
-    return c.json({ message: "Could not prepare a sponsored trustline right now." }, 502);
   }
 });
 

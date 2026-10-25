@@ -1,13 +1,11 @@
-// Sponsored claims and trustlines: the app's sponsor account pays the fee (and
-// the trustline reserve when needed) so a recipient with no spare XLM can still
-// claim, and a new wallet can hold the app's assets.
+// Sponsored claims: the app's sponsor account pays the fee (and the trustline
+// reserve when needed) so a recipient with no spare XLM can still claim.
 // The server never signs a transaction it did not build itself: it rebuilds
 // the claim from the balance ID and checks it against the ledger first.
 import {
   type AccountSnapshot,
   type HorizonClaimableBalance,
   buildSponsoredClaimTx,
-  buildSponsoredTrustlineTx,
   defaultConfig as config,
   hasTrustline,
   viewBalance,
@@ -18,10 +16,6 @@ import { z } from "zod";
 export const SponsorRequest = z.object({
   balanceId: z.string().regex(/^[0-9a-f]{72}$/i),
   claimant: z.string().refine((s) => StrKey.isValidEd25519PublicKey(s), "not a G... address"),
-});
-
-export const TrustlineRequest = z.object({
-  account: z.string().refine((s) => StrKey.isValidEd25519PublicKey(s), "not a G... address"),
 });
 
 export class SponsorError extends Error {
@@ -77,21 +71,4 @@ export async function sponsorClaim(req: z.infer<typeof SponsorRequest>): Promise
   const tx = TransactionBuilder.fromXDR(xdr, config.networkPassphrase);
   tx.sign(kp);
   return { xdr: tx.toXDR(), trustline: needsTrust };
-}
-
-/**
- * Builds a sponsored trustline for the first app asset the account does not
- * hold yet, and signs it as the sponsor. Null when nothing is missing.
- */
-export async function sponsorTrustline(req: z.infer<typeof TrustlineRequest>): Promise<{ xdr: string | null }> {
-  const kp = sponsorKeypair();
-  const account = await notFoundAsNull(horizon.loadAccount(req.account));
-  if (!account) throw new SponsorError("Your account does not exist on testnet yet.", 409);
-  const missing = config.assets.find((a) => a.issuer && !hasTrustline(account as unknown as AccountSnapshot, a));
-  if (!missing) return { xdr: null };
-
-  const sponsor = await horizon.loadAccount(kp.publicKey());
-  const tx = TransactionBuilder.fromXDR(buildSponsoredTrustlineTx(sponsor, req.account, missing, config), config.networkPassphrase);
-  tx.sign(kp);
-  return { xdr: tx.toXDR() };
 }
