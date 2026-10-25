@@ -84,13 +84,13 @@ export class VoiceError extends Error {
 
 const HOUR = 60 * 60_000;
 export const LIMITS = {
-  /** Sessions per client IP per hour. */
-  perIp: 5,
-  /** Sessions for the whole server per hour. */
+  /** Sessions per client IP per hour. Generous: a venue or office shares one IP. */
+  perIp: 20,
+  /** Sessions for the whole server per hour (at most 5 minutes each). */
   perHour: 60,
 };
 
-/** Client IP → session start times in the last hour. */
+/** Client IP → times of sessions created in the last hour. Failed attempts are not billed and don't count. */
 const byIp = new Map<string, number[]>();
 let recent: number[] = [];
 
@@ -112,8 +112,6 @@ export async function createVoiceSession(req: z.infer<typeof VoiceRequest>, ip: 
   const ipTimes = byIp.get(ip) ?? [];
   if (ipTimes.length >= LIMITS.perIp) throw new VoiceError("Too many voice sessions from your network this hour.", 429);
   if (recent.length >= LIMITS.perHour) throw new VoiceError("Voice mode is busy this hour.", 429);
-  byIp.set(ip, [...ipTimes, now]);
-  recent.push(now);
 
   client ??= new OpenAI({ maxRetries: 0 });
   const live = await client.live.create({
@@ -130,5 +128,7 @@ export async function createVoiceSession(req: z.infer<typeof VoiceRequest>, ip: 
     },
     transport: { type: "webrtc", sdp: req.sdp },
   });
+  byIp.set(ip, [...(byIp.get(ip) ?? []), now]);
+  recent.push(now);
   return { sdp: live.transport.sdp, sessionId: live.session.id };
 }
