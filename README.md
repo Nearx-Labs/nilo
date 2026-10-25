@@ -36,24 +36,17 @@ Nilo addresses both halves with Stellar's own primitives:
 
 ## How a payment flows
 
-```mermaid
-sequenceDiagram
-    actor U as You
-    participant AI as Chat agent (LLM)
-    participant N as Nilo (deterministic)
-    participant W as Wallet (via Pollar)
-    participant S as Stellar testnet
-
-    U->>AI: "send 50 TESTUSD to maria, she has 2 minutes"
-    AI-->>N: {amount: "50", asset: "TESTUSD", recipient: "maria", deadlineSeconds: 120}
-    Note over AI: Missing or ambiguous field?<br/>The agent asks instead of guessing.
-    N->>N: Validate: address, allowed asset, ≤ 7 decimals,<br/>balance covers amount + 1 XLM reserve
-    N->>N: Build createClaimableBalance (XDR)
-    N->>N: Decode the XDR into a fixed-template explanation<br/>and check it against what you asked for
-    N-->>U: "Sends 50 TESTUSD to GBYY…O2ZK (maria).<br/>Claimable until 13:26 UTC, then only you can recover it."
-    U->>W: Sign
-    W->>S: Submit
-```
+1. **You write** "send 50 TESTUSD to maria, she has 2 minutes".
+2. **The chat agent (LLM)** turns the sentence into four fields:
+   `{amount: "50", asset: "TESTUSD", recipient: "maria", deadlineSeconds: 120}`. If a field is missing or
+   ambiguous, it asks instead of guessing.
+3. **Nilo validates** the intent with deterministic code: address, allowed asset, at most 7 decimals, and a balance
+   that covers the amount plus the 1 XLM reserve.
+4. **Nilo builds** a `createClaimableBalance` transaction (XDR).
+5. **Nilo explains** it: the XDR is decoded into a fixed-template sentence and checked against what you asked for.
+   You read, for example: "Sends 50 TESTUSD to GBYY…O2ZK (maria). Claimable until 13:26 UTC, then only you can
+   recover it."
+6. **You sign** in your wallet (via Pollar), and the wallet submits the transaction to Stellar testnet.
 
 The explanation step accepts only the exact shape Nilo builds. An extra operation, a third claimant, swapped
 deadlines, a memo or a recovery path to someone else all produce **"Do not sign"** instead of a best-effort summary.
@@ -62,16 +55,10 @@ deadlines, a memo or a recovery path to someone else all produce **"Do not sign"
 
 Each payment is one claimable balance with two time predicates that share the same instant `T`:
 
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> Pending: sender signs
-    Pending --> Claimed: recipient claims before T
-    Pending --> Recoverable: T passes unclaimed
-    Recoverable --> Recovered: sender claims at or after T
-    Claimed --> [*]
-    Recovered --> [*]
-```
+A payment ends in one of two ways:
+
+- **Claimed:** the recipient claims it before `T`.
+- **Recovered:** `T` passes unclaimed, and the sender claims it at or after `T`.
 
 | Claimant | Predicate | Meaning |
 |---|---|---|
