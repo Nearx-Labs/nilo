@@ -7,8 +7,7 @@ import {
 } from "@nilo/core";
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { HowItWorks } from "../components/HowItWorks";
-import { ChevronIcon, CloseIcon, PlusIcon, SendIcon, WalletIcon } from "../components/icons";
+import { ChevronIcon, CloseIcon, PlusIcon, SendIcon, SparkleIcon, WalletIcon } from "../components/icons";
 import { type ChatActionState, QUICK_ACTIONS, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
 import { asSnapshot, config, loadAccount } from "../stellar";
@@ -26,12 +25,6 @@ type ExtractResponse =
   | { status: "error"; message: string };
 
 const EXAMPLE = "Send 50 TESTUSD to maria, she has 2 minutes";
-
-const STEPS = [
-  { title: "Tell me what to send", text: "In plain words, or with the form behind the + button." },
-  { title: "Read before you sign", text: "The explanation is decoded from the transaction, not written by the AI." },
-  { title: "Sign in your wallet", text: "If nobody claims it in time, it comes back to you." },
-];
 
 async function validateFresh(intent: SendIntent, address: string): Promise<ResolvedIntent> {
   const account = await loadAccount(address);
@@ -164,6 +157,14 @@ export function SendPage() {
     };
   }, [pending, address]);
 
+  function reset() {
+    setMessages([]);
+    setPending(null);
+    setSent(null);
+    setDraft("");
+    setMode("chat");
+  }
+
   function cancel() {
     setPending(null);
     setSent(null);
@@ -174,27 +175,36 @@ export function SendPage() {
 
   return (
     <div className="stack chat-page page-wide">
+      <header className="page-head">
+        <span className="eyebrow">Chat</span>
+        <h1>
+          Hi! I'm <span className="accent-word">Nilo</span>
+        </h1>
+        <p className="muted">
+          <strong className="lead">Your payments agent on Stellar.</strong>{" "}
+          {fresh
+            ? "Tell me who should get what and how long they have. I build the transaction, explain it in plain words before you sign, and you get it back if nobody claims it."
+            : "Ask for another payment, check your balance, or start over."}
+        </p>
+        <div className="row">
+          {address && (
+            <>
+              <span className="connected">
+                <WalletIcon width={16} height={16} /> Connected
+              </span>
+              <span className="muted small">as {short(address)}</span>
+            </>
+          )}
+          {!fresh && (
+            <button type="button" className="secondary new-chat" onClick={reset} disabled={busy}>
+              <PlusIcon width={16} height={16} /> New chat
+            </button>
+          )}
+        </div>
+      </header>
+
       {fresh && (
         <>
-          <header className="page-head">
-            <span className="eyebrow">Chat</span>
-            <h1>
-              Hi! I'm <span className="accent-word">Nilo</span>
-            </h1>
-            <p className="muted">
-              <strong className="lead">Your payments agent on Stellar.</strong> Tell me who should get what and how long
-              they have. I build the transaction, explain it in plain words before you sign, and you get it back if
-              nobody claims it.
-            </p>
-            {address && (
-              <div className="row">
-                <span className="connected">
-                  <WalletIcon width={16} height={16} /> Connected
-                </span>
-                <span className="muted small">as {short(address)}</span>
-              </div>
-            )}
-          </header>
           <div className="action-grid">
             {QUICK_ACTIONS.map((a) => (
               <button key={a.title} className="action-card" onClick={() => runQuick(a)}>
@@ -216,14 +226,26 @@ export function SendPage() {
       )}
 
       {messages.length > 0 && (
-        <div className="chat-log">
+        <section className="panel conversation" aria-label="Conversation">
           {messages.map((m, i) => (
-            <div key={i} className={`bubble ${m.role}`}>
-              {m.content}
+            <div key={i} className={`msg ${m.role}`}>
+              {m.role === "assistant" && (
+                <span className="icon-tile violet plain msg-avatar" aria-hidden="true">
+                  <SparkleIcon width={14} height={14} />
+                </span>
+              )}
+              <div className={`bubble ${m.role}`}>{m.content}</div>
             </div>
           ))}
-          {busy && <div className="bubble assistant muted">…</div>}
-        </div>
+          {busy && (
+            <div className="msg assistant">
+              <span className="icon-tile violet plain msg-avatar" aria-hidden="true">
+                <SparkleIcon width={14} height={14} />
+              </span>
+              <div className="bubble assistant muted">…</div>
+            </div>
+          )}
+        </section>
       )}
 
       {mode === "chat" ? (
@@ -268,8 +290,6 @@ export function SendPage() {
           <IntentForm disabled={!!pending} onSubmit={startReview} />
         </div>
       )}
-
-      {fresh && <HowItWorks steps={STEPS} />}
 
       {/* The rail lists contacts on wide screens; this copy shows when it is hidden. */}
       <p className="muted small contacts-inline">
