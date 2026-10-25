@@ -1,5 +1,5 @@
 import { BalanceList } from "../components/Balances";
-import { ChevronIcon, InfoIcon } from "../components/icons";
+import { HowItWorks } from "../components/HowItWorks";
 
 const STEPS = [
   { title: "Someone sends you a payment", text: "The transaction is detected on the network." },
@@ -21,23 +21,7 @@ export function ClaimPage() {
         </p>
       </header>
       <BalanceList role="recipient" />
-      <section className="panel how">
-        <h2>
-          <InfoIcon width={16} height={16} /> How it works
-        </h2>
-        <ol className="steps">
-          {STEPS.map((s, i) => (
-            <li key={s.title}>
-              <span className="step-num">{i + 1}</span>
-              <div>
-                <strong>{s.title}</strong>
-                <p>{s.text}</p>
-              </div>
-              {i < STEPS.length - 1 && <ChevronIcon className="step-arrow" width={16} height={16} />}
-            </li>
-          ))}
-        </ol>
-      </section>
+      <HowItWorks steps={STEPS} />
     </div>
   );
 }
