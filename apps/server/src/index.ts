@@ -73,9 +73,9 @@ app.post("/api/faucet", async (c) => {
 
 app.post("/api/voice/session", async (c) => {
   const parsed = VoiceRequest.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ message: "Invalid connection offer." }, 400);
+  if (!parsed.success) return c.json({ message: "Invalid voice mode request." }, 400);
   try {
-    return c.json(await createVoiceSession(parsed.data, clientIp(c)));
+    return c.json(await createVoiceSession(parsed.data));
   } catch (e) {
     if (e instanceof VoiceError) return c.json({ message: e.message }, e.status);
     console.error("voice session failed:", e);

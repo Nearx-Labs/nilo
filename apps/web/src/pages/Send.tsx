@@ -44,7 +44,7 @@ import { getQuote, shortContract } from "../prices";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
 import { useVoiceSession } from "../voice";
-import { SETUP_TEXT, useAccountSetup, useWallet } from "../wallet";
+import { SETUP_TEXT, useAccountSetup, useVoiceProof, useWallet } from "../wallet";
 
 type ExtractResponse =
   | { status: "complete"; intent: SendIntent }
@@ -193,6 +193,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
     voiceOut.current?.push(spoken);
     setMessages((m) => [...m, { role: "assistant", content }]);
   };
+  const voiceProof = useVoiceProof();
   const voice = useVoiceSession({
     onToolCall: runVoiceTool,
     onTranscript: (role, content) => setMessages((m) => [...m, { role, content }]),
@@ -356,6 +357,16 @@ export function ChatPage({ bot }: { bot: Bot }) {
       say(`I can't prepare that: ${(e as Error).message}`);
       return false;
     }
+  }
+
+  /** Voice mode is billed per minute to the server's key: only for a signed-in wallet, which proves it once. */
+  function startVoice() {
+    if (!address) {
+      say(walletError ?? "Sign in to use voice mode (the button at the bottom of the sidebar).");
+      connect();
+      return;
+    }
+    voice.start(() => voiceProof(address));
   }
 
   /** A tool the voice backend asked for. Its arguments are untrusted, like /api/extract's output. */
@@ -691,7 +702,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
             <button
               type="button"
               className={`round-send voice ${voice.state}`}
-              onClick={voice.state === "idle" ? voice.start : voice.stop}
+              onClick={voice.state === "idle" ? startVoice : voice.stop}
               disabled={voice.state === "closing"}
               aria-pressed={voice.state !== "idle"}
               title={VOICE_LABEL[voice.state]}

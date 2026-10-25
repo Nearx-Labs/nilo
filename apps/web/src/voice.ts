@@ -2,6 +2,7 @@
 // the key) and answers our WebRTC offer; audio flows on media tracks and JSON events on the
 // "oai-events" data channel. The backend model asks for tools; the page runs them and the
 // result goes back to be spoken.
+import type { VoiceProof } from "@nilo/core";
 import { useEffect, useRef, useState } from "react";
 
 export type VoiceState = "idle" | "connecting" | "live" | "closing";
@@ -48,7 +49,8 @@ export function useVoiceSession(handlers: VoiceHandlers) {
 
   useEffect(() => () => teardown.current?.(), []);
 
-  async function start() {
+  /** `getProof` may ask the wallet to sign; it runs after the click's audio setup, before the microphone. */
+  async function start(getProof: () => Promise<VoiceProof>) {
     if (state !== "idle") return;
     setState("connecting");
     const pc = new RTCPeerConnection();
@@ -81,6 +83,8 @@ export function useVoiceSession(handlers: VoiceHandlers) {
     teardown.current = cleanup;
 
     try {
+      const proof = await getProof();
+      if (done) return;
       mic = await navigator.mediaDevices.getUserMedia({ audio: true });
       mic.getTracks().forEach((t) => pc.addTrack(t, mic!));
       meters.current.mic = tap(mic);
@@ -110,7 +114,7 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       const res = await fetch("/api/voice/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sdp: pc.localDescription!.sdp }),
+        body: JSON.stringify({ sdp: pc.localDescription!.sdp, proof }),
       });
       const body = (await res.json().catch(() => ({}))) as { sdp?: string; message?: string };
       if (!res.ok || !body.sdp) throw new Error(body.message ?? "Voice mode is unavailable right now.");

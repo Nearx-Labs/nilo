@@ -3,6 +3,7 @@
 // backend turns what was said into calls to tools the browser runs: the text chat's send and
 // price requests, plus the balance. The browser validates them again, reads prices and balances
 // itself and shows the usual review: nothing is built or signed from here.
+import { VoiceProofSchema, verifyVoiceProof } from "@nilo/core";
 import OpenAI from "openai";
 import { z } from "zod";
 
@@ -71,12 +72,13 @@ const TOOLS = [
   },
 ];
 
-export const VoiceRequest = z.object({ sdp: z.string().min(1).max(20_000) });
+/** The browser's WebRTC offer, and a signed proof that it controls a wallet. */
+export const VoiceRequest = z.object({ sdp: z.string().min(1).max(20_000), proof: VoiceProofSchema });
 
 export class VoiceError extends Error {
   constructor(
     message: string,
-    readonly status: 429 | 502 | 503,
+    readonly status: 401 | 403 | 429 | 502 | 503,
   ) {
     super(message);
   }
@@ -84,33 +86,46 @@ export class VoiceError extends Error {
 
 const HOUR = 60 * 60_000;
 export const LIMITS = {
-  /** Sessions per client IP per hour. Generous: a venue or office shares one IP. */
-  perIp: 20,
-  /** Sessions for the whole server per hour (at most 5 minutes each). */
+  /** Sessions per wallet per hour. */
+  perWallet: 10,
+  /** Sessions for the whole server per hour (at most 5 minutes each): anyone can make a new wallet. */
   perHour: 60,
 };
 
-/** Client IP → times of sessions created in the last hour. Failed attempts are not billed and don't count. */
-const byIp = new Map<string, number[]>();
+/** When set (comma-separated G... addresses), only these wallets may use voice mode, e.g. the presenter's. */
+const ALLOWED = new Set(
+  (process.env.VOICE_ALLOWED_ADDRESSES ?? "")
+    .split(",")
+    .map((a) => a.trim())
+    .filter(Boolean),
+);
+
+/** Wallet → times of sessions created in the last hour. Failed attempts are not billed and don't count. */
+const byWallet = new Map<string, number[]>();
 let recent: number[] = [];
 
 function prune(now: number) {
-  for (const [ip, times] of byIp) {
+  for (const [address, times] of byWallet) {
     const kept = times.filter((t) => t > now - HOUR);
-    if (kept.length) byIp.set(ip, kept);
-    else byIp.delete(ip);
+    if (kept.length) byWallet.set(address, kept);
+    else byWallet.delete(address);
   }
   recent = recent.filter((t) => t > now - HOUR);
 }
 
 let client: OpenAI | null = null;
 
-export async function createVoiceSession(req: z.infer<typeof VoiceRequest>, ip: string): Promise<{ sdp: string; sessionId: string }> {
+export async function createVoiceSession(req: z.infer<typeof VoiceRequest>): Promise<{ sdp: string; sessionId: string }> {
   if (!process.env.OPENAI_API_KEY) throw new VoiceError("The server has no OPENAI_API_KEY.", 503);
   const now = Date.now();
+  const check = verifyVoiceProof(req.proof, now);
+  if (!check.ok) throw new VoiceError(`Sign in again to use voice mode (${check.reason}).`, 401);
+  const { address } = req.proof;
+  if (ALLOWED.size && !ALLOWED.has(address)) throw new VoiceError("Voice mode is not enabled for this wallet.", 403);
   prune(now);
-  const ipTimes = byIp.get(ip) ?? [];
-  if (ipTimes.length >= LIMITS.perIp) throw new VoiceError("Too many voice sessions from your network this hour.", 429);
+  if ((byWallet.get(address)?.length ?? 0) >= LIMITS.perWallet) {
+    throw new VoiceError("This wallet used voice mode too often this hour.", 429);
+  }
   if (recent.length >= LIMITS.perHour) throw new VoiceError("Voice mode is busy this hour.", 429);
 
   client ??= new OpenAI({ maxRetries: 0 });
@@ -128,7 +143,7 @@ export async function createVoiceSession(req: z.infer<typeof VoiceRequest>, ip: 
     },
     transport: { type: "webrtc", sdp: req.sdp },
   });
-  byIp.set(ip, [...(byIp.get(ip) ?? []), now]);
+  byWallet.set(address, [...(byWallet.get(address) ?? []), now]);
   recent.push(now);
   return { sdp: live.transport.sdp, sessionId: live.session.id };
 }
