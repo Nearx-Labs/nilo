@@ -20,12 +20,31 @@ const ICE_TIMEOUT_MS = 10_000;
 /** How long to wait for session.closed (final usage) before tearing down anyway. */
 const CLOSE_TIMEOUT_MS = 15_000;
 
+export interface VoiceLevels {
+  /** Loudness of the microphone, 0 to 1. */
+  mic: number;
+  /** Loudness of the assistant's speech, 0 to 1. */
+  out: number;
+}
+
+/** Root mean square of the analyser's current waveform, 0 to 1. */
+function rms(analyser: AnalyserNode | null, buf: Uint8Array<ArrayBuffer>): number {
+  if (!analyser) return 0;
+  analyser.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (const v of buf) sum += ((v - 128) / 128) ** 2;
+  return Math.sqrt(sum / buf.length);
+}
+
 export function useVoiceSession(handlers: VoiceHandlers) {
   const [state, setState] = useState<VoiceState>("idle");
   const h = useRef(handlers);
   h.current = handlers;
   const teardown = useRef<(() => void) | null>(null);
   const hangup = useRef<(() => void) | null>(null);
+  /** Read-only taps on the two audio streams, for the level meter. Not connected to the speakers. */
+  const meters = useRef<{ mic: AnalyserNode | null; out: AnalyserNode | null }>({ mic: null, out: null });
+  const buf = useRef(new Uint8Array(256));
 
   useEffect(() => () => teardown.current?.(), []);
 
@@ -35,6 +54,14 @@ export function useVoiceSession(handlers: VoiceHandlers) {
     const pc = new RTCPeerConnection();
     const audio = new Audio();
     audio.autoplay = true;
+    // Created inside the click so the browser lets it run.
+    const ctx = new AudioContext();
+    const tap = (stream: MediaStream) => {
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      return analyser;
+    };
     let mic: MediaStream | null = null;
     const timers: number[] = [];
     let done = false;
@@ -46,6 +73,8 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       mic?.getTracks().forEach((t) => t.stop());
       pc.close();
       audio.srcObject = null;
+      meters.current = { mic: null, out: null };
+      ctx.close().catch(() => {});
       teardown.current = hangup.current = null;
       setState("idle");
     };
@@ -54,9 +83,12 @@ export function useVoiceSession(handlers: VoiceHandlers) {
     try {
       mic = await navigator.mediaDevices.getUserMedia({ audio: true });
       mic.getTracks().forEach((t) => pc.addTrack(t, mic!));
+      meters.current.mic = tap(mic);
       pc.ontrack = (e) => {
-        audio.srcObject = e.streams[0] ?? new MediaStream([e.track]);
+        const stream = e.streams[0] ?? new MediaStream([e.track]);
+        audio.srcObject = stream;
         audio.play().catch(() => {});
+        if (!done) meters.current.out = tap(stream);
       };
       // The channel has to exist before the offer so it is negotiated with it.
       const dc = pc.createDataChannel("oai-events");
@@ -165,6 +197,7 @@ export function useVoiceSession(handlers: VoiceHandlers) {
     state,
     start,
     stop: () => (hangup.current ?? teardown.current)?.(),
+    levels: (): VoiceLevels => ({ mic: rms(meters.current.mic, buf.current), out: rms(meters.current.out, buf.current) }),
   };
 }
 

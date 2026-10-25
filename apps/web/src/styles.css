@@ -224,7 +224,24 @@ a { color: var(--accent); }
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
   50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); }
 }
-@media (prefers-reduced-motion: reduce) { .round-send.voice.live { animation: none; } }
+.voice-bar {
+  flex: 1; min-width: 0; height: 44px; padding: 0 4px; display: flex; align-items: center; gap: 12px;
+  color: var(--muted); font-size: 15px;
+}
+.voice-meter { flex: none; height: 28px; display: flex; align-items: center; gap: 4px; }
+.voice-meter i {
+  --lvl: 0;
+  display: block; width: 4px; height: 100%; border-radius: 2px; background: currentColor;
+  transform: scaleY(calc(0.15 + var(--lvl) * 0.85)); transition: transform 60ms linear;
+}
+.voice-bar.live { color: var(--accent); }
+.voice-bar.live .voice-label { color: var(--text); }
+.voice-bar.live.speaking { color: #d6d6d6; }
+.voice-bar.connecting .voice-meter, .voice-bar.closing .voice-meter { opacity: 0.4; }
+@media (prefers-reduced-motion: reduce) {
+  .round-send.voice.live { animation: none; }
+  .voice-meter i { transition: none; }
+}
 
 /* ---------- Stroopy avatars ---------- */
 .stroopy { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; }

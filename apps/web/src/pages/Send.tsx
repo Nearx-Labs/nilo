@@ -35,6 +35,7 @@ import {
 } from "../components/icons";
 import { type ChatActionState, MoreMenu, PageTop, QUICK_ACTIONS, TRUST_URL, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
+import { VoiceBar } from "../components/VoiceBar";
 import { getQuote, shortContract } from "../prices";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
@@ -237,7 +238,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 6 * 22 + 22)}px`;
-  }, [draft]);
+  }, [draft, voice.state]);
 
   async function checkBalance() {
     setMessages((m) => [...m, { role: "user", content: "What's my balance?" }]);
@@ -610,33 +611,39 @@ export function ChatPage({ bot }: { bot: Bot }) {
           >
             <PlusIcon />
           </button>
-          <textarea
-            ref={input}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
-              // Enter also confirms an IME candidate; only send once composition is over.
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-                e.preventDefault();
-                onChat();
-              }
-            }}
-            placeholder={voice.state === "live" ? `Listening… talk to ${bot.name}` : `Message ${bot.name}`}
-            readOnly={busy}
-            disabled={!!pending}
-            aria-label="Message"
-            rows={1}
-          />
-          <button
-            type="button"
-            className="icon-btn ghost voice"
-            disabled
-            aria-disabled="true"
-            title="Voice input — coming soon"
-            aria-label="Voice input — coming soon"
-          >
-            <MicIcon />
-          </button>
+          {voice.state !== "idle" ? (
+            <VoiceBar state={voice.state} levels={voice.levels} name={bot.name} />
+          ) : (
+            <>
+              <textarea
+                ref={input}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+                  // Enter also confirms an IME candidate; only send once composition is over.
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                    e.preventDefault();
+                    onChat();
+                  }
+                }}
+                placeholder={`Message ${bot.name}`}
+                readOnly={busy}
+                disabled={!!pending}
+                aria-label="Message"
+                rows={1}
+              />
+              <button
+                type="button"
+                className="icon-btn ghost voice"
+                disabled
+                aria-disabled="true"
+                title="Voice input — coming soon"
+                aria-label="Voice input — coming soon"
+              >
+                <MicIcon />
+              </button>
+            </>
+          )}
           {hasText && voice.state === "idle" ? (
             <button type="submit" className="round-send" disabled={busy || !!pending} aria-label="Send" title="Send">
               <ArrowUpIcon />
