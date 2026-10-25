@@ -202,6 +202,13 @@ export function useVoiceSession(handlers: VoiceHandlers) {
     start,
     stop: () => (hangup.current ?? teardown.current)?.(),
     levels: (): VoiceLevels => ({ mic: rms(meters.current.mic, buf.current), out: rms(meters.current.out, buf.current) }),
+    /** Fills `into` with the frequency spectrum of one side (128 bins, 0 to 255); false before it has audio. */
+    spectrum: (side: "mic" | "out", into: Uint8Array<ArrayBuffer>): boolean => {
+      const analyser = meters.current[side];
+      if (!analyser) return false;
+      analyser.getByteFrequencyData(into);
+      return true;
+    },
   };
 }
 

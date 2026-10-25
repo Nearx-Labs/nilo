@@ -243,6 +243,36 @@ a { color: var(--accent); }
   .voice-meter i { transition: none; }
 }
 
+/* ---------- Voice mode overlay (experimental) ---------- */
+.voice-overlay {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  padding: max(20px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
+  background: radial-gradient(circle at 50% 45%, #0d1a2b 0%, #070b12 55%, #030508 100%);
+  color: #dfe8f5; animation: voice-overlay-in 0.25s ease-out;
+}
+.voice-overlay.speaking { background: radial-gradient(circle at 50% 45%, #241a0c 0%, #0c0905 55%, #050403 100%); }
+@keyframes voice-overlay-in { from { opacity: 0; transform: scale(1.02); } }
+.voice-overlay-tag { margin: 0; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #6f8099; }
+.voice-overlay-center { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.voice-orb { display: block; width: min(78vw, 400px, 58dvh); aspect-ratio: 1; }
+.voice-overlay-status {
+  margin: 4px 0 0; font-size: 22px; font-weight: 300; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #9fd2ff; transition: color 0.3s;
+}
+.voice-overlay.speaking .voice-overlay-status { color: #ffcf8a; }
+.voice-overlay.connecting .voice-overlay-status, .voice-overlay.closing .voice-overlay-status { color: #8a96a8; }
+.voice-overlay-task { min-height: 20px; margin: 0; font-size: 14px; color: #7f8ea3; }
+.voice-overlay-end {
+  width: 64px; height: 64px; padding: 0; border: none; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #e5484d; color: #fff; box-shadow: 0 6px 24px rgba(229, 72, 77, 0.35);
+}
+.voice-overlay-end:hover:not(:disabled) { background: #f05358; }
+.voice-overlay-end:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.voice-overlay-end svg { width: 26px; height: 26px; }
+@media (prefers-reduced-motion: reduce) { .voice-overlay { animation: none; } }
+
 /* ---------- Stroopy avatars ---------- */
 .stroopy { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .stroopy-tint { position: absolute; inset: 0; }
