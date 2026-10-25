@@ -1,18 +1,24 @@
 import {
   FIAT_SIGNS,
+  STROOPS_PER_UNIT,
   type PriceQuery,
+  PriceQuerySchema,
   type ResolvedIntent,
   type SendIntent,
+  SendIntentSchema,
   assetToFiat,
   buildSendTx,
   crossRate,
   fiatToAsset,
   formatFiat,
   formatRate,
+  formatScaled,
   formatUtc,
+  fromStroops,
   isFiat,
   mismatches,
   priceSymbol,
+  toStroops,
   validateIntent,
 } from "@nilo/core";
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -33,9 +39,11 @@ import {
 } from "../components/icons";
 import { type ChatActionState, MoreMenu, PageTop, QUICK_ACTIONS, TRUST_URL, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
+import { VoiceBar } from "../components/VoiceBar";
 import { getQuote, shortContract } from "../prices";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
+import { useVoiceSession } from "../voice";
 import { SETUP_TEXT, useAccountSetup, useWallet } from "../wallet";
 
 type ExtractResponse =
@@ -45,6 +53,12 @@ type ExtractResponse =
   | { status: "error"; message: string };
 
 const EXAMPLE = "Send 50 USDC to maria, she has 2 minutes";
+const VOICE_LABEL = {
+  idle: "Voice mode",
+  connecting: "Connecting voice mode… (tap to cancel)",
+  live: "End voice mode",
+  closing: "Ending voice mode…",
+} as const;
 /** Pixels from the bottom that still count as "following" the conversation. */
 const STICK_PX = 80;
 
@@ -117,14 +131,28 @@ async function convertFiat(intent: SendIntent): Promise<{ intent: SendIntent; co
   };
 }
 
-/** "≈ US$ 12.34", or null when there is no price for the asset (never blocks a payment). */
-async function approxValue(amount: string, assetCode: string): Promise<string | null> {
+/** Value in DISPLAY_FIAT as a 7-decimal amount, or null when there is no price for the asset. */
+async function fiatValue(amount: string, assetCode: string): Promise<string | null> {
   try {
     const [asset, fiat] = await Promise.all([getQuote(priceSymbol(config, assetCode)), getQuote(DISPLAY_FIAT)]);
-    return `≈ ${formatFiat(assetToFiat(amount, asset, fiat), DISPLAY_FIAT)}`;
+    return assetToFiat(amount, asset, fiat);
   } catch {
     return null;
   }
+}
+
+/** "≈ US$ 12.34", or null when there is no price for the asset (never blocks a payment). */
+async function approxValue(amount: string, assetCode: string): Promise<string | null> {
+  const value = await fiatValue(amount, assetCode);
+  return value === null ? null : `≈ ${formatFiat(value, DISPLAY_FIAT)}`;
+}
+
+/** An amount rounded for speech ("9999.9999900" -> "10,000"); the exact one stays on screen. */
+function spokenAmount(amount: string): string {
+  const stroops = toStroops(amount);
+  const digits = stroops >= 100n * STROOPS_PER_UNIT ? 0 : stroops >= STROOPS_PER_UNIT ? 2 : 4;
+  const text = formatScaled(stroops, STROOPS_PER_UNIT, digits);
+  return text.includes(".") ? text.replace(/\.?0+$/, "") : text;
 }
 
 async function validateFresh(intent: SendIntent, address: string): Promise<ResolvedIntent> {
@@ -158,7 +186,18 @@ export function ChatPage({ bot }: { bot: Bot }) {
   // The welcome screen reads from the top; only a conversation (or the form) follows the bottom.
   const idle = fresh && mode === "chat";
 
-  const say =(content: string) => setMessages((m) => [...m, { role: "assistant", content }]);
+  /** While a voice tool call runs, what the app says is also its result, spoken back. */
+  const voiceOut = useRef<string[] | null>(null);
+  /** `spoken` replaces `content` in voice mode when the text doesn't read well aloud (long decimals). */
+  const say = (content: string, spoken = content) => {
+    voiceOut.current?.push(spoken);
+    setMessages((m) => [...m, { role: "assistant", content }]);
+  };
+  const voice = useVoiceSession({
+    onToolCall: runVoiceTool,
+    onTranscript: (role, content) => setMessages((m) => [...m, { role, content }]),
+    onError: say,
+  });
   const input = useRef<HTMLTextAreaElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const flow = useRef<HTMLDivElement>(null);
@@ -218,10 +257,15 @@ export function ChatPage({ bot }: { bot: Bot }) {
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 6 * 22 + 22)}px`;
-  }, [draft]);
+  }, [draft, voice.state]);
 
-  async function checkBalance() {
+  /** From the menu or a quick action: shows the question it answers. Voice already has the user's words. */
+  function checkBalance() {
     setMessages((m) => [...m, { role: "user", content: "What's my balance?" }]);
+    return answerBalance();
+  }
+
+  async function answerBalance() {
     if (!address) {
       say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then I can check your balance.");
       connect();
@@ -241,38 +285,52 @@ export function ChatPage({ bot }: { bot: Bot }) {
         say("Your account is not on testnet yet. Fund it with Friendbot on the Claim page.");
         return;
       }
-      const lines = await Promise.all(
+      const rows = await Promise.all(
         account.balances.map(async (b) => {
           const code = b.asset_type === "native" ? "XLM" : "asset_code" in b ? b.asset_code : null;
-          if (!code) return `${b.balance} pool share`;
-          const approx = await approxValue(b.balance, code);
-          return `${b.balance} ${code}${approx ? ` (${approx})` : ""}`;
+          if (!code) return { line: `${b.balance} pool share`, spoken: null, value: null };
+          const value = await fiatValue(b.balance, code);
+          const money = value && formatFiat(value, DISPLAY_FIAT);
+          return {
+            line: `${b.balance} ${code}${money ? ` (≈ ${money})` : ""}`,
+            // Aloud, money is easier to follow than token units; units only when there is no price.
+            spoken: money ? `${money} in ${code}` : `about ${spokenAmount(b.balance)} ${code}`,
+            value,
+          };
         }),
       );
+      const values = rows.flatMap((r) => (r.value ? [toStroops(r.value)] : []));
+      const total = values.length > 1 && formatFiat(fromStroops(values.reduce((a, b) => a + b)), DISPLAY_FIAT);
+      const usdcNote = setup === "usdc" ? `\n\n${SETUP_TEXT.usdc}` : "";
       say(
-        `Your available funds:\n${lines.map((l) => `• ${l}`).join("\n")}` +
-          (lines.some((l) => l.includes("≈")) ? "\n\nValues from the Reflector oracle on testnet." : "") +
-          (setup === "usdc" ? `\n\n${SETUP_TEXT.usdc}` : ""),
+        `Your available funds:\n${rows.map((r) => `• ${r.line}`).join("\n")}` +
+          (values.length ? "\n\nValues from the Reflector oracle on testnet." : "") +
+          usdcNote,
+        `The user has ${rows.flatMap((r) => r.spoken ?? []).join(", and ")}.` +
+          (total ? ` In total about ${total}.` : "") +
+          " The exact amounts are on screen." +
+          usdcNote,
       );
     } catch (e) {
       say(`I couldn't load your balance: ${(e as Error).message}`);
     }
   }
 
-  async function startReview(intent: SendIntent) {
+  /** True when the review is on screen. */
+  async function startReview(intent: SendIntent): Promise<boolean> {
     const from = address;
     if (!from) {
       say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then try again.");
       connect();
-      return;
+      return false;
     }
     if (notReady) {
       say(notReady);
-      return;
+      return false;
     }
     if (setup) {
       say(SETUP_TEXT[setup]);
-      return;
+      return false;
     }
     try {
       let conversion: Conversion | undefined;
@@ -293,8 +351,36 @@ export function ChatPage({ bot }: { bot: Bot }) {
         : "This address does not exist on testnet. Nobody may be able to claim it; you can recover the funds after the deadline.";
       setSent(null);
       setPending({ intent, resolved, warning, conversion, approx });
+      return true;
     } catch (e) {
       say(`I can't prepare that: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  /** A tool the voice backend asked for. Its arguments are untrusted, like /api/extract's output. */
+  async function runVoiceTool(name: string, args: unknown): Promise<string> {
+    voiceOut.current = [];
+    try {
+      if (name === "get_balance") {
+        await answerBalance();
+      } else if (name === "get_price") {
+        const query = PriceQuerySchema.safeParse(args);
+        if (!query.success) return "That price request was incomplete.";
+        await answerPrice(query.data);
+      } else if (name === "prepare_send") {
+        const raw = (args ?? {}) as Record<string, unknown>;
+        const intent = SendIntentSchema.safeParse({ ...raw, fiatCurrency: raw.fiatCurrency ?? undefined });
+        if (!intent.success) return "That payment request was incomplete.";
+        if (await startReview(intent.data)) {
+          voiceOut.current.push("The review is on screen. Nothing is sent until the user checks it and taps Sign and send.");
+        }
+      } else {
+        return `There is no tool called ${name}.`;
+      }
+      return voiceOut.current.join("\n");
+    } finally {
+      voiceOut.current = null;
     }
   }
 
@@ -564,45 +650,52 @@ export function ChatPage({ bot }: { bot: Bot }) {
           >
             <PlusIcon />
           </button>
-          <textarea
-            ref={input}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
-              // Enter also confirms an IME candidate; only send once composition is over.
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-                e.preventDefault();
-                onChat();
-              }
-            }}
-            placeholder={`Message ${bot.name}`}
-            readOnly={busy}
-            disabled={!!pending}
-            aria-label="Message"
-            rows={1}
-          />
-          <button
-            type="button"
-            className="icon-btn ghost voice"
-            disabled
-            aria-disabled="true"
-            title="Voice input — coming soon"
-            aria-label="Voice input — coming soon"
-          >
-            <MicIcon />
-          </button>
-          {hasText ? (
+          {voice.state !== "idle" ? (
+            <VoiceBar state={voice.state} levels={voice.levels} name={bot.name} />
+          ) : (
+            <>
+              <textarea
+                ref={input}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+                  // Enter also confirms an IME candidate; only send once composition is over.
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                    e.preventDefault();
+                    onChat();
+                  }
+                }}
+                placeholder={`Message ${bot.name}`}
+                readOnly={busy}
+                disabled={!!pending}
+                aria-label="Message"
+                rows={1}
+              />
+              <button
+                type="button"
+                className="icon-btn ghost voice"
+                disabled
+                aria-disabled="true"
+                title="Voice input — coming soon"
+                aria-label="Voice input — coming soon"
+              >
+                <MicIcon />
+              </button>
+            </>
+          )}
+          {hasText && voice.state === "idle" ? (
             <button type="submit" className="round-send" disabled={busy || !!pending} aria-label="Send" title="Send">
               <ArrowUpIcon />
             </button>
           ) : (
             <button
               type="button"
-              className="round-send voice"
-              disabled
-              aria-disabled="true"
-              title="Voice mode — coming soon"
-              aria-label="Voice mode — coming soon"
+              className={`round-send voice ${voice.state}`}
+              onClick={voice.state === "idle" ? voice.start : voice.stop}
+              disabled={voice.state === "closing"}
+              aria-pressed={voice.state !== "idle"}
+              title={VOICE_LABEL[voice.state]}
+              aria-label={VOICE_LABEL[voice.state]}
             >
               <WaveformIcon />
             </button>
