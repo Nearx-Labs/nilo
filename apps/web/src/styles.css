@@ -243,6 +243,44 @@ a { color: var(--accent); }
   .voice-meter i { transition: none; }
 }
 
+/* ---------- Voice mode (experimental) ---------- */
+/* Fills the chat panel (.view), not the window: the sidebar stays. Above the page header, under Pollar's dialogs. */
+.voice-overlay {
+  --hud: 104, 182, 236;
+  --orb: min(70cqw, 340px, 50cqh);
+  position: absolute; inset: 0; z-index: 6; container-type: size; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  padding: max(22px, env(safe-area-inset-top)) 16px max(22px, env(safe-area-inset-bottom));
+  background: radial-gradient(ellipse at 50% 40%, rgba(var(--hud), 0.07), transparent 60%), #070b10;
+  animation: voice-overlay-in 0.25s ease-out;
+}
+.voice-overlay.speaking { --hud: 236, 184, 120; }
+.voice-overlay.connecting, .voice-overlay.closing { --hud: 120, 138, 160; }
+@keyframes voice-overlay-in { from { opacity: 0; } }
+
+.voice-tag { margin: 0; font-size: 12px; letter-spacing: 0.28em; text-transform: uppercase; color: rgba(var(--hud), 0.55); }
+.voice-main { display: flex; flex-direction: column; align-items: center; gap: 28px; }
+.voice-orb { position: relative; flex: none; width: var(--orb); aspect-ratio: 1; }
+.voice-orb canvas { display: block; width: 100%; height: 100%; }
+.voice-orb-icon { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(var(--hud), 0.9); }
+.voice-orb-icon svg { width: calc(var(--orb) * 0.15); height: calc(var(--orb) * 0.15); }
+
+.voice-text { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.voice-title { margin: 0; font-size: 26px; font-weight: 300; color: #dde5ee; }
+.voice-subtitle { margin: 0; min-height: 16px; font-size: 13px; color: rgba(var(--hud), 0.65); }
+
+.voice-cancel { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.voice-cancel button {
+  width: 56px; height: 56px; padding: 0; border: none; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; background: #c9545a; color: #fff;
+}
+.voice-cancel button:hover:not(:disabled) { background: #d65f65; }
+.voice-cancel button:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+.voice-cancel button svg { width: 24px; height: 24px; }
+.voice-cancel span { font-size: 12px; color: rgba(var(--hud), 0.55); }
+
+@media (prefers-reduced-motion: reduce) { .voice-overlay { animation: none; } }
+
 /* ---------- Stroopy avatars ---------- */
 .stroopy { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .stroopy-tint { position: absolute; inset: 0; }

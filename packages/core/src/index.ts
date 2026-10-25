@@ -5,3 +5,4 @@ export * from "./build";
 export * from "./predicates";
 export * from "./explain";
 export * from "./prices";
+export * from "./voiceProof";

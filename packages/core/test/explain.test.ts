@@ -1,6 +1,6 @@
 import { Account, Asset, Claimant, Memo, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { buildClaimTx, buildSendTx, buildSponsoredClaimTx, buildSponsoredTrustlineTx, explain, formatUtc, mismatches } from "../src";
+import { buildClaimTx, buildSendTx, buildSponsoredClaimTx, explain, formatUtc, mismatches } from "../src";
 import { ALICE, ISSUER, MARIA, NOW, NOW_SEC, SPONSOR, STRANGER, aliceAccount, config } from "./fixtures";
 
 const TESTUSD = { code: "TESTUSD", issuer: ISSUER };
@@ -154,6 +154,7 @@ describe("explain: sponsored claim", () => {
 
   const tampered: Record<string, string> = {
     "unknown sponsor": sponsoredTx((b) => b.addOperation(begin()).addOperation(trust()).addOperation(end()).addOperation(claim()), STRANGER),
+    "trustline with no claim": sponsoredTx((b) => b.addOperation(begin()).addOperation(trust()).addOperation(end())),
     "sponsors a different account": sponsoredTx((b) =>
       b.addOperation(begin(STRANGER)).addOperation(trust()).addOperation(end()).addOperation(claim()),
     ),
@@ -179,60 +180,6 @@ describe("explain: sponsored claim", () => {
           claimants: [new Claimant(MARIA, before(deadline)), new Claimant(SPONSOR, after(deadline))],
         }),
       ),
-    ),
-  };
-  for (const [name, xdr] of Object.entries(tampered)) {
-    it(`rejects: ${name}`, () => {
-      const e = explain(xdr, config);
-      expect(e.kind).toBe("unrecognized");
-      expect(e.lines.join("\n")).toContain("Do not sign");
-    });
-  }
-});
-
-describe("explain: sponsored trustline", () => {
-  function sponsoredTx(ops: (b: TransactionBuilder) => TransactionBuilder, source = SPONSOR): string {
-    const b = new TransactionBuilder(new Account(source, "7"), {
-      fee: "100",
-      networkPassphrase: config.networkPassphrase,
-      timebounds: { minTime: 0, maxTime: NOW_SEC + 180 },
-    });
-    return ops(b).build().toXDR();
-  }
-  const begin = (id = MARIA) => Operation.beginSponsoringFutureReserves({ sponsoredId: id });
-  const trust = (opts: { limit?: string; source?: string; asset?: Asset } = {}) =>
-    Operation.changeTrust({ asset: opts.asset ?? new Asset("TESTUSD", ISSUER), limit: opts.limit, source: opts.source ?? MARIA });
-  const end = (source = MARIA) => Operation.endSponsoringFutureReserves({ source });
-
-  it("explains a trustline the sponsor pays for", () => {
-    const e = explain(buildSponsoredTrustlineTx(new Account(SPONSOR, "7"), MARIA, TESTUSD, config, NOW), config);
-    expect(e.kind).toBe("trustline");
-    if (e.kind !== "trustline") return;
-    expect(e.fields).toMatchObject({ source: SPONSOR, account: MARIA, asset: TESTUSD });
-    const text = e.lines.join("\n");
-    expect(text).toContain(`your account ${MARIA} can hold TESTUSD`);
-    expect(text).toContain("pays the network fee and the 0.5 XLM trustline reserve");
-  });
-
-  const tampered: Record<string, string> = {
-    "unknown sponsor": sponsoredTx((b) => b.addOperation(begin()).addOperation(trust()).addOperation(end()), STRANGER),
-    "sponsors a different account": sponsoredTx((b) => b.addOperation(begin(STRANGER)).addOperation(trust()).addOperation(end())),
-    "trustline on a different account": sponsoredTx((b) =>
-      b.addOperation(begin()).addOperation(trust({ source: STRANGER })).addOperation(end()),
-    ),
-    "trustline limit 0": sponsoredTx((b) => b.addOperation(begin()).addOperation(trust({ limit: "0" })).addOperation(end())),
-    "asset the app does not use": sponsoredTx((b) =>
-      b.addOperation(begin()).addOperation(trust({ asset: new Asset("SCAM", STRANGER) })).addOperation(end()),
-    ),
-    "end before changeTrust": sponsoredTx((b) => b.addOperation(begin()).addOperation(end()).addOperation(trust())),
-    "sponsor trusts for itself": sponsoredTx((b) =>
-      b.addOperation(begin(SPONSOR)).addOperation(trust({ source: SPONSOR })).addOperation(end(SPONSOR)),
-    ),
-    "payment instead of changeTrust": sponsoredTx((b) =>
-      b
-        .addOperation(begin())
-        .addOperation(Operation.payment({ destination: SPONSOR, asset: Asset.native(), amount: "1", source: MARIA }))
-        .addOperation(end()),
     ),
   };
   for (const [name, xdr] of Object.entries(tampered)) {

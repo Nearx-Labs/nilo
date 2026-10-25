@@ -1,24 +1,13 @@
-import {
-  type BalanceView,
-  type Explanation,
-  type HorizonClaimableBalance,
-  buildClaimTx,
-  canAffordTrustline,
-  fromStroops,
-  hasTrustline,
-  toStroops,
-  viewBalance,
-} from "@nilo/core";
+import { type BalanceView, type HorizonClaimableBalance, fromStroops, toStroops, viewBalance } from "@nilo/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FAUCET_BELOW, asSnapshot, config, friendbot, horizon, loadAccount, requestFaucet, requestSponsoredClaim } from "../stellar";
+import { TrustlineNeeded, claimReady, prepareClaim } from "../claim";
+import { FAUCET_BELOW, config, fetchClaimable, friendbot, loadAccount, requestFaucet } from "../stellar";
 import { formatLocal, formatRelative, short, useNow } from "../time";
 import { useWallet } from "../wallet";
 import { EmptyWallet } from "./EmptyWallet";
 import { RefreshIcon } from "./icons";
 import { type Prepared, SignPanel } from "./SignPanel";
 
-/** Ledger close times can trail the local clock by a few seconds. */
-const CLOCK_MARGIN = 5;
 /** How often the list reloads from Horizon on its own, so new payments show up without a click. */
 const POLL_MS = 15_000;
 
@@ -31,8 +20,7 @@ export function useBalances(address: string | null) {
     setLoading(true);
     setError(null);
     try {
-      const page = await horizon.claimableBalances().claimant(address).limit(100).order("desc").call();
-      setRecords(page.records as unknown as HorizonClaimableBalance[]);
+      setRecords(await fetchClaimable(address));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -145,39 +133,17 @@ function BalanceRow(props: {
   const [sponsorNeeded, setSponsorNeeded] = useState(false);
   const [busy, setBusy] = useState(false);
   const isRecipient = v.role === "recipient";
-  const ready = v.claimableNow && (isRecipient || !v.deadline || now >= v.deadline + CLOCK_MARGIN);
+  const ready = claimReady(v, now);
 
   const prepare = useCallback(async (): Promise<Prepared> => {
-    const check = (e: Explanation) => {
-      if (e.kind !== "claim") return ["transaction type"];
-      const out: string[] = [];
-      if (e.fields.balanceId !== v.id) out.push("balance");
-      if (e.fields.claimant !== address) out.push("account");
-      return out;
-    };
-    // Recipients claim for free: Nilo's sponsor pays the fee and any trustline reserve.
-    // If the sponsor is unavailable, fall back to a claim the recipient pays for.
-    // Not for embedded (email/Google) wallets: Pollar only signs transactions whose
-    // source is the wallet itself, and those accounts are funded on creation anyway.
-    if (isRecipient && config.sponsor && custody !== "internal") {
-      try {
-        return { xdr: await requestSponsoredClaim(v.id, address), check };
-      } catch (e) {
-        console.warn("Sponsored claim unavailable, falling back to self-paid:", (e as Error).message);
-      }
-    }
-    const account = await loadAccount(address);
-    if (!account) throw new Error("Your account does not exist on testnet yet. Fund it (e.g. Friendbot) and try again.");
-    const needsTrust = !hasTrustline(asSnapshot(account), { code: v.asset.code, issuer: v.asset.issuer });
-    if (needsTrust && !canAffordTrustline(asSnapshot(account))) {
+    try {
+      return await prepareClaim(v, address, custody);
+    } catch (e) {
+      if (!(e instanceof TrustlineNeeded)) throw e;
       setSponsorNeeded(true);
-      throw new Error(
-        `To receive ${v.asset.code} your account needs a trustline, which reserves 0.5 XLM, and you don't have enough spare XLM. Enable ${v.asset.code} below (Pollar can sponsor it), then claim.`,
-      );
+      throw new Error(`${e.message} Enable ${v.asset.code} below (Pollar can sponsor it), then claim.`);
     }
-    const xdr = buildClaimTx(v.id, account, config, needsTrust ? { code: v.asset.code, issuer: v.asset.issuer } : undefined);
-    return { xdr, check };
-  }, [address, custody, isRecipient, v.id, v.asset.code, v.asset.issuer]);
+  }, [v, address, custody]);
 
   return (
     <article className="card">

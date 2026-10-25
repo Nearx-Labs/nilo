@@ -134,6 +134,7 @@ you sign is the asset amount, explained from the XDR as before.
    | `OPENAI_API_KEY` | OpenAI. Used only by the chat and voice endpoints; the form (the **+** button next to the chat box) works without it. |
    | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. |
    | `OPENAI_VOICE_BACKEND_MODEL`, `OPENAI_VOICE` | Optional, for voice mode (GPT-Live, needs a paid API tier). The model that turns speech into a send or price request defaults to `OPENAI_MODEL`; the voice to `marin`. |
+   | `VOICE_ALLOWED_ADDRESSES` | Optional. Voice mode is for signed-in wallets, which sign a message once (SEP-53) so the server can tell who opens sessions on its key. Set comma-separated G… addresses to allow only those wallets, e.g. the presenter's during a demo. |
    | `VITE_POLLAR_API_KEY` | Pollar dashboard → Build → API Keys → **publishable** key (`pub_testnet_…`). Never use a secret key here: `VITE_*` values are shipped to the browser. |
    | `SPONSOR_SECRET` | Written for you by step 4. Testnet secret of the account that pays claim fees and trustline reserves. Server-side only. |
 
@@ -208,7 +209,7 @@ Helper scripts:
 | Path | What it does |
 |---|---|
 | [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation, price math. All the tests live here. |
-| [`apps/server`](apps/server) | Four endpoints. `POST /api/extract`: chat messages in, a structured send intent, price question or clarifying question out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. `POST /api/sponsor-trustline`: a new wallet's address in, a USDC trustline signed by the sponsor out (the reserve is the sponsor's). `POST /api/faucet`: an address in, 100 test USDC from the Sozu Faucet, rate-limited per account (1/day), per IP (3/day), per server (20/hour), one at a time, and paused while Sozu says it is out or cooling down. |
+| [`apps/server`](apps/server) | Four endpoints. `POST /api/extract`: chat messages in, a structured send intent, price question or clarifying question out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. `POST /api/faucet`: an address in, 100 test USDC from the Sozu Faucet, rate-limited per account (1/day), per IP (3/day), per server (20/hour), one at a time, and paused while Sozu says it is out or cooling down. `POST /api/voice/session`: a WebRTC SDP offer and a SEP-53 proof of wallet ownership in, the SDP answer of a GPT-Live voice session out, rate-limited per wallet (10/hour) and per server (60/hour). Nothing is built or signed there: the browser shows the usual review. |
 | [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance, ask for a price), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
 | [`scripts/`](scripts) | Testnet and sponsor setup, the wallet-free smoke tests, and the demo reset. |
 

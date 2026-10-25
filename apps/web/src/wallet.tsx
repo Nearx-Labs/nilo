@@ -1,10 +1,10 @@
 // Wallet access through Pollar: login (Freighter, Albedo, email, Google…) and
 // signing. The app only ever reads the public address; Pollar or the user's
 // wallet holds the keys.
-import { hasTrustline, toStroops } from "@nilo/core";
+import { type VoiceProof, hasTrustline, toStroops, voiceProofExpiry, voiceProofMessage } from "@nilo/core";
 import { type SubmitOutcome } from "@pollar/core";
 import { usePollar, walletNotReadyReason } from "@pollar/react";
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { FAUCET_BELOW, asSnapshot, config, friendbot, loadAccount, requestFaucet } from "./stellar";
 
 export class UserCancelled extends Error {}
@@ -81,6 +81,59 @@ export function useWallet() {
       setTrustline,
     };
   }, [wallets, isAuthenticated, openLoginModal, signAndSubmitTx, setTrustline]);
+}
+
+/** How long a voice mode proof is valid: one signature per half day. */
+const VOICE_PROOF_MS = 12 * 60 * 60_000;
+const voiceProofKey = (address: string) => `nilo.voiceProof.${address}`;
+/** Proofs signed in this tab, by address. */
+const voiceProofs = new Map<string, VoiceProof>();
+
+function storedVoiceProof(address: string): VoiceProof | null {
+  try {
+    const raw = sessionStorage.getItem(voiceProofKey(address));
+    return raw ? (JSON.parse(raw) as VoiceProof) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A signed proof that the user controls `address`, which the server asks for before opening a
+ * voice session (billed to its OpenAI key). The wallet signs once (SEP-53); the proof is reused
+ * until shortly before it expires.
+ */
+export function useVoiceProof() {
+  const { getClient } = usePollar();
+  return useCallback(
+    async (address: string): Promise<VoiceProof> => {
+      const cached = voiceProofs.get(address) ?? storedVoiceProof(address);
+      if (cached && (voiceProofExpiry(cached.message) ?? 0) > Date.now() + 5 * 60_000) return cached;
+      if (WATCH) throw new Error("Watch mode (?watch=) can't sign, so it can't use voice mode.");
+      const message = voiceProofMessage(address, new Date(Date.now() + VOICE_PROOF_MS));
+      const result = await getClient().stellar.sep53.signMessage(message);
+      if (result.status !== "signed") {
+        const details = result.details ?? "";
+        throw new Error(
+          /CANCEL|DENIED|reject|declin|cancel|denied/i.test(details)
+            ? "Voice mode needs one signature to know it's you. Nothing was sent."
+            : /does not support message signing/i.test(details)
+              ? "Your wallet can't sign messages, which voice mode needs. Sign in with email, Google or Freighter."
+              : `Your wallet couldn't sign the voice mode check${details ? `: ${details}` : "."}`,
+        );
+      }
+      if (result.signerAddress !== address) throw new Error("Your wallet signed with another account. Sign in again.");
+      const proof = { address, message, signature: result.signature };
+      voiceProofs.set(address, proof);
+      try {
+        sessionStorage.setItem(voiceProofKey(address), JSON.stringify(proof));
+      } catch {
+        // Kept in memory for this tab only.
+      }
+      return proof;
+    },
+    [getClient],
+  );
 }
 
 /** What the account setup below is doing for an address, while it runs. */

@@ -1,5 +1,9 @@
 import {
+  type BalanceSelector,
+  BalanceSelectorSchema,
+  type BalanceView,
   FIAT_SIGNS,
+  PaymentRoleSchema,
   STROOPS_PER_UNIT,
   type PriceQuery,
   PriceQuerySchema,
@@ -17,6 +21,8 @@ import {
   fromStroops,
   isFiat,
   mismatches,
+  nicknameFor,
+  pickBalances,
   priceSymbol,
   toStroops,
   validateIntent,
@@ -24,6 +30,7 @@ import {
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { type Bot, type ChatMessage, DEFAULT_BOT, loadChat, useBots } from "../bots/store";
+import { TrustlineNeeded, claimReady, loadPayments, prepareClaim } from "../claim";
 import { StroopyAvatar } from "../bots/StroopyAvatar";
 import {
   ArrowUpIcon,
@@ -40,11 +47,12 @@ import {
 import { type ChatActionState, MoreMenu, PageTop, QUICK_ACTIONS, TRUST_URL, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
 import { VoiceBar } from "../components/VoiceBar";
+import { VoiceOverlay } from "../components/VoiceOverlay";
 import { getQuote, shortContract } from "../prices";
-import { asSnapshot, config, loadAccount } from "../stellar";
-import { formatLocal } from "../time";
+import { FAUCET_BELOW, asSnapshot, config, loadAccount, requestFaucet } from "../stellar";
+import { formatLocal, formatRelative } from "../time";
 import { useVoiceSession } from "../voice";
-import { SETUP_TEXT, useAccountSetup, useWallet } from "../wallet";
+import { SETUP_TEXT, useAccountSetup, useVoiceProof, useWallet } from "../wallet";
 
 type ExtractResponse =
   | { status: "complete"; intent: SendIntent }
@@ -53,6 +61,15 @@ type ExtractResponse =
   | { status: "error"; message: string };
 
 const EXAMPLE = "Send 50 USDC to maria, she has 2 minutes";
+const VOICE_TASKS: Record<string, string> = {
+  get_price: "Checking prices…",
+  get_balance: "Checking your balance…",
+  prepare_send: "Preparing your payment…",
+  list_payments: "Checking your payments…",
+  prepare_claim: "Preparing your claim…",
+  prepare_recover: "Preparing the recovery…",
+  request_test_usdc: "Asking the faucet…",
+};
 const VOICE_LABEL = {
   idle: "Voice mode",
   connecting: "Connecting voice mode… (tap to cancel)",
@@ -66,7 +83,10 @@ const CHECKING = "Checking and building the transaction…";
 const DONE = "Sent. The recipient can now claim it.";
 const CANCELLED = "Cancelled. Nothing was sent.";
 const INTERRUPTED = "That review was closed. If you didn't sign it, nothing was sent.";
-const ENDINGS = [DONE, CANCELLED, INTERRUPTED];
+const CLAIMED = "Claimed. The funds are in your account.";
+const RECOVERED = "Recovered. The funds are back in your account.";
+const CLAIM_CANCELLED = "Cancelled. Nothing was claimed.";
+const ENDINGS = [DONE, CANCELLED, INTERRUPTED, CLAIMED, RECOVERED, CLAIM_CANCELLED];
 
 /** A saved chat can end mid-review (reload, other bot); the sign panel is not saved, so say so. */
 function loadSettled(botId: string): ChatMessage[] {
@@ -147,12 +167,53 @@ async function approxValue(amount: string, assetCode: string): Promise<string | 
   return value === null ? null : `≈ ${formatFiat(value, DISPLAY_FIAT)}`;
 }
 
-/** An amount rounded for speech ("9999.9999900" -> "10,000"); the exact one stays on screen. */
+/** An amount rounded for speech ("9999.9999900" -> "10,000"); the chat history keeps the exact one. */
 function spokenAmount(amount: string): string {
   const stroops = toStroops(amount);
   const digits = stroops >= 100n * STROOPS_PER_UNIT ? 0 : stroops >= STROOPS_PER_UNIT ? 2 : 4;
   const text = formatScaled(stroops, STROOPS_PER_UNIT, digits);
   return text.includes(".") ? text.replace(/\.?0+$/, "") : text;
+}
+
+const nowSec = () => Math.floor(Date.now() / 1000);
+
+/** A contact's nickname, or the first and last four characters of an address (how voice mode says one). */
+function who(address?: string): string {
+  if (!address) return "an unknown account";
+  return nicknameFor(config, address) ?? `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
+/** Why a pending payment can or can't be claimed now, in one clause. */
+function paymentStatus(v: BalanceView, now: number): string {
+  const due = v.deadline && formatRelative(v.deadline - now);
+  switch (v.status) {
+    case "claimable":
+      return due ? `you can claim it; the deadline is ${due}` : "you can claim it";
+    case "expired":
+      return `the deadline passed${due ? ` ${due}` : ""}; only the sender can recover it`;
+    case "waiting":
+      return due ? `waiting for them to claim it; the deadline is ${due}, and you can recover it after that` : "waiting for them to claim it";
+    case "recoverable":
+      return claimReady(v, now) ? "nobody claimed it; you can recover it" : "the deadline just passed; you can recover it in a few seconds";
+  }
+}
+
+/** Numbered lines for a list of pending payments: exact amounts on screen, money aloud. */
+async function paymentLines(views: BalanceView[], now: number): Promise<{ text: string; spoken: string }> {
+  const rows = await Promise.all(
+    views.map(async (v, i) => {
+      const code = v.asset.code;
+      const value = await fiatValue(v.amount, code);
+      const money = value && formatFiat(value, DISPLAY_FIAT);
+      const side = v.role === "recipient" ? `from ${who(v.sender)}` : `to ${who(v.recipient)}`;
+      const status = paymentStatus(v, now);
+      return {
+        text: `${i + 1}. ${fromStroops(toStroops(v.amount))} ${code}${money ? ` (≈ ${money})` : ""} ${side}: ${status}.`,
+        spoken: `${i + 1}: ${money ? `${money} in ${code}` : `about ${spokenAmount(v.amount)} ${code}`} ${side}, ${status}.`,
+      };
+    }),
+  );
+  return { text: rows.map((r) => r.text).join("\n"), spoken: rows.map((r) => r.spoken).join(" ") };
 }
 
 async function validateFresh(intent: SendIntent, address: string): Promise<ResolvedIntent> {
@@ -167,7 +228,7 @@ async function validateFresh(intent: SendIntent, address: string): Promise<Resol
 }
 
 export function ChatPage({ bot }: { bot: Bot }) {
-  const { address, connect, error: walletError, notReady } = useWallet();
+  const { address, connect, custody, error: walletError, notReady } = useWallet();
   const setup = useAccountSetup(address);
   const { saveChat, deleteBot } = useBots();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadSettled(bot.id));
@@ -182,7 +243,12 @@ export function ChatPage({ bot }: { bot: Bot }) {
     approx?: string | null;
   } | null>(null);
   const [sent, setSent] = useState<{ deadline: number; balanceId: string } | null>(null);
-  const fresh = messages.length === 0 && !pending;
+  /** A claim or recovery asked for by voice, waiting to be reviewed and signed. */
+  const [pendingClaim, setPendingClaim] = useState<{ view: BalanceView; prepare: () => Promise<Prepared> } | null>(null);
+  /** The last list of pending payments read to the user, per side: what "the second one" refers to. */
+  const listed = useRef<Partial<Record<BalanceView["role"], BalanceView[]>>>({});
+  const reviewing = !!pending || !!pendingClaim;
+  const fresh = messages.length === 0 && !reviewing;
   // The welcome screen reads from the top; only a conversation (or the form) follows the bottom.
   const idle = fresh && mode === "chat";
 
@@ -193,6 +259,9 @@ export function ChatPage({ bot }: { bot: Bot }) {
     voiceOut.current?.push(spoken);
     setMessages((m) => [...m, { role: "assistant", content }]);
   };
+  const voiceProof = useVoiceProof();
+  /** What a voice tool call is doing, shown under the orb. */
+  const [voiceTask, setVoiceTask] = useState<string | null>(null);
   const voice = useVoiceSession({
     onToolCall: runVoiceTool,
     onTranscript: (role, content) => setMessages((m) => [...m, { role, content }]),
@@ -249,7 +318,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
   useEffect(() => {
     stick.current = !idle;
     scroller.current?.scrollTo({ top: idle ? 0 : scroller.current.scrollHeight, behavior: "smooth" });
-  }, [messages.length, busy, mode, pending, idle]);
+  }, [messages.length, busy, mode, pending, pendingClaim, idle]);
 
   // Grow the composer with its text, up to six lines.
   useLayoutEffect(() => {
@@ -258,6 +327,20 @@ export function ChatPage({ bot }: { bot: Bot }) {
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 6 * 22 + 22)}px`;
   }, [draft, voice.state]);
+
+  /** Says why the wallet can't be used yet, if it can't. */
+  function blocked(): boolean {
+    if (!address) {
+      say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then try again.");
+      connect();
+      return true;
+    }
+    if (notReady) {
+      say(notReady);
+      return true;
+    }
+    return false;
+  }
 
   /** From the menu or a quick action: shows the question it answers. Voice already has the user's words. */
   function checkBalance() {
@@ -308,7 +391,6 @@ export function ChatPage({ bot }: { bot: Bot }) {
           usdcNote,
         `The user has ${rows.flatMap((r) => r.spoken ?? []).join(", and ")}.` +
           (total ? ` In total about ${total}.` : "") +
-          " The exact amounts are on screen." +
           usdcNote,
       );
     } catch (e) {
@@ -350,6 +432,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
         ? undefined
         : "This address does not exist on testnet. Nobody may be able to claim it; you can recover the funds after the deadline.";
       setSent(null);
+      setPendingClaim(null);
       setPending({ intent, resolved, warning, conversion, approx });
       return true;
     } catch (e) {
@@ -358,9 +441,142 @@ export function ChatPage({ bot }: { bot: Bot }) {
     }
   }
 
+  async function answerPayments(role: BalanceView["role"]) {
+    if (blocked()) return;
+    try {
+      const now = nowSec();
+      const views = await loadPayments(address!, role, now);
+      listed.current[role] = views;
+      if (!views.length) {
+        say(role === "recipient" ? "No payments are waiting for you." : "You have no pending payments that you sent.");
+        return;
+      }
+      const lines = await paymentLines(views, now);
+      const title = role === "recipient" ? "Payments waiting for you" : "Payments you sent that are still pending";
+      say(`${title}:\n${lines.text}`, `${title}: ${lines.spoken}`);
+    } catch (e) {
+      say(`I couldn't load your payments: ${(e as Error).message}`);
+    }
+  }
+
+  /** Claims (recipient) or recovers (sender) one pending payment. True when the review is on screen. */
+  async function startClaim(role: BalanceView["role"], selector: BalanceSelector): Promise<boolean> {
+    if (blocked()) return false;
+    if (setup === "account") {
+      say(SETUP_TEXT.account);
+      return false;
+    }
+    const verb = role === "recipient" ? "claim" : "recover";
+    try {
+      const now = nowSec();
+      const current = await loadPayments(address!, role, now);
+      // Positions refer to the list the user heard; the payments themselves are checked again on the ledger.
+      const picked = pickBalances(listed.current[role] ?? current, selector, config);
+      const live = picked.flatMap((p) => current.find((c) => c.id === p.id) ?? []);
+      const usable = live.filter((v) => v.claimableNow);
+      if (usable.length === 1) {
+        const v = usable[0];
+        if (!claimReady(v, now)) {
+          say("The deadline has just passed. Try again in a few seconds.");
+          return false;
+        }
+        // Built once here so a problem is said out loud; the panel rebuilds it only if asked to.
+        let first: Prepared | null = await prepareClaim(v, address!, custody);
+        setPending(null);
+        setSent(null);
+        setPendingClaim({
+          view: v,
+          prepare: async () => {
+            const p = first;
+            first = null;
+            return p ?? prepareClaim(v, address!, custody);
+          },
+        });
+        return true;
+      }
+      if (usable.length > 1) {
+        listed.current[role] = usable;
+        const lines = await paymentLines(usable, now);
+        say(`Which one do you want to ${verb}?\n${lines.text}`, `More than one payment matches. Which one should be ${verb}ed? ${lines.spoken}`);
+      } else if (live.length === 1) {
+        say(`That payment can't be ${verb}ed now: ${paymentStatus(live[0], now)}.`);
+      } else if (live.length > 1) {
+        say(`None of those payments can be ${verb}ed now.`);
+      } else if (picked.length) {
+        say("That payment is no longer pending: it was already claimed or recovered.");
+      } else if (current.length) {
+        say(`No pending payment matches that. Ask me to list your ${role === "recipient" ? "incoming" : "sent"} payments.`);
+      } else {
+        say(role === "recipient" ? "No payments are waiting for you." : "You have no pending payments that you sent.");
+      }
+      return false;
+    } catch (e) {
+      say(
+        e instanceof TrustlineNeeded
+          ? `${e.message} Enable it on the Claim page (Pollar can sponsor it), then try again.`
+          : `I can't prepare that: ${(e as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /** Free test USDC, through Nilo's server (which rate-limits the faucet). */
+  async function answerFaucet() {
+    if (blocked()) return;
+    if (setup) {
+      say(SETUP_TEXT[setup]);
+      return;
+    }
+    const usdc = config.assets.find((a) => a.code === "USDC" && a.issuer);
+    if (!usdc) {
+      say("This app has no test USDC to give.");
+      return;
+    }
+    try {
+      const account = await loadAccount(address!);
+      if (!account) {
+        say("Your account is not on testnet yet. Fund it with Friendbot on the Claim page.");
+        return;
+      }
+      const line = account.balances.find((b) => "asset_code" in b && b.asset_code === usdc.code && b.asset_issuer === usdc.issuer);
+      if (!line) {
+        say("Your account has no USDC trustline yet, so it can't hold USDC.");
+        return;
+      }
+      if (toStroops(line.balance) >= toStroops(FAUCET_BELOW)) {
+        say(
+          `You already have ${line.balance} USDC. Test USDC is only for accounts with less than ${FAUCET_BELOW}.`,
+          `The user already has about ${spokenAmount(line.balance)} USDC. Test USDC is only for accounts with less than ${FAUCET_BELOW}.`,
+        );
+        return;
+      }
+      const amount = await requestFaucet(address!);
+      say(`Got ${amount} test USDC.`);
+    } catch (e) {
+      const retryAt = (e as { retryAt?: number }).retryAt;
+      const at = retryAt ? Math.ceil(retryAt / 1000) : null;
+      const message = (e as Error).message;
+      say(
+        message + (at ? ` Try again after ${formatLocal(at)}.` : ""),
+        message + (at ? ` It can be tried again ${formatRelative(at - nowSec())}.` : ""),
+      );
+    }
+  }
+
+  /** Voice mode is billed per minute to the server's key: only for a signed-in wallet, which proves it once. */
+  function startVoice() {
+    if (!address) {
+      say(walletError ?? "Sign in to use voice mode (the button at the bottom of the sidebar).");
+      connect();
+      return;
+    }
+    voice.start(() => voiceProof(address));
+  }
+
   /** A tool the voice backend asked for. Its arguments are untrusted, like /api/extract's output. */
   async function runVoiceTool(name: string, args: unknown): Promise<string> {
     voiceOut.current = [];
+    setVoiceTask(VOICE_TASKS[name] ?? null);
     try {
       if (name === "get_balance") {
         await answerBalance();
@@ -375,12 +591,28 @@ export function ChatPage({ bot }: { bot: Bot }) {
         if (await startReview(intent.data)) {
           voiceOut.current.push("The review is on screen. Nothing is sent until the user checks it and taps Sign and send.");
         }
+      } else if (name === "list_payments") {
+        const role = PaymentRoleSchema.safeParse((args as { role?: unknown } | null)?.role);
+        if (!role.success) return "That request was incomplete: say whether it is about payments received or sent.";
+        await answerPayments(role.data);
+      } else if (name === "prepare_claim" || name === "prepare_recover") {
+        const selector = BalanceSelectorSchema.safeParse(args);
+        if (!selector.success) return "That request was incomplete.";
+        const recover = name === "prepare_recover";
+        if (await startClaim(recover ? "sender" : "recipient", selector.data)) {
+          voiceOut.current.push(
+            `The review is on screen. Nothing is ${recover ? "recovered" : "claimed"} until the user checks it and taps Sign and ${recover ? "recover" : "claim"}.`,
+          );
+        }
+      } else if (name === "request_test_usdc") {
+        await answerFaucet();
       } else {
         return `There is no tool called ${name}.`;
       }
       return voiceOut.current.join("\n");
     } finally {
       voiceOut.current = null;
+      setVoiceTask(null);
     }
   }
 
@@ -465,6 +697,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
     setMessages([]);
     setPending(null);
     setSent(null);
+    setPendingClaim(null);
     setDraft("");
     setMode("chat");
   }
@@ -473,6 +706,13 @@ export function ChatPage({ bot }: { bot: Bot }) {
     setPending(null);
     setSent(null);
     say(CANCELLED);
+    voice.notify("The user cancelled the payment review. Nothing was sent.");
+  }
+
+  function cancelClaim() {
+    setPendingClaim(null);
+    say(CLAIM_CANCELLED);
+    voice.notify("The user cancelled the review. Nothing was claimed or recovered.");
   }
 
   function fillExample() {
@@ -507,7 +747,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
                 <button
                   type="button"
                   role="menuitem"
-                  disabled={busy || !!pending}
+                  disabled={busy || reviewing}
                   onClick={() => {
                     close();
                     checkBalance();
@@ -592,7 +832,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
                     <CloseIcon width={18} height={18} />
                   </button>
                 </div>
-                <IntentForm disabled={!!pending} onSubmit={startReview} />
+                <IntentForm disabled={reviewing} onSubmit={startReview} />
               </section>
             </div>
           )}
@@ -618,7 +858,10 @@ export function ChatPage({ bot }: { bot: Bot }) {
                 prepare={prepare}
                 signLabel="Sign and send"
                 onCancel={cancel}
-                onDone={() => say(DONE)}
+                onDone={() => {
+                  say(DONE);
+                  voice.notify("The user signed and sent the payment. The recipient can now claim it.");
+                }}
                 doneMessage={
                   sent && (
                     <>
@@ -635,8 +878,45 @@ export function ChatPage({ bot }: { bot: Bot }) {
               />
             </div>
           )}
+
+          {pendingClaim && address && (
+            <div className="msg assistant wide">
+              <p className="review-note">
+                <strong>Check it, then sign.</strong> Nothing is {pendingClaim.view.role === "recipient" ? "claimed" : "recovered"} until
+                you sign. Every line below is decoded from the transaction itself, not written by the AI.
+              </p>
+              <SignPanel
+                key={pendingClaim.view.id}
+                prepare={pendingClaim.prepare}
+                signLabel={pendingClaim.view.role === "recipient" ? "Sign and claim" : "Sign and recover"}
+                onCancel={cancelClaim}
+                onDone={() => {
+                  const recovered = pendingClaim.view.role === "sender";
+                  say(recovered ? RECOVERED : CLAIMED);
+                  voice.notify(`The user signed the ${recovered ? "recovery" : "claim"}. The funds are in their account.`);
+                }}
+                doneMessage={
+                  <button className="secondary" onClick={() => setPendingClaim(null)}>
+                    Done
+                  </button>
+                }
+              />
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Voice only, no transcript. It steps aside for a review, which has to be read and signed. */}
+      {voice.state !== "idle" && !reviewing && (
+        <VoiceOverlay
+          state={voice.state}
+          levels={voice.levels}
+          spectrum={voice.spectrum}
+          task={voiceTask}
+          name={bot.name}
+          onEnd={voice.stop}
+        />
+      )}
 
       <div className="composer-wrap">
         <form onSubmit={onChat} className="composer">
@@ -667,7 +947,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
                 }}
                 placeholder={`Message ${bot.name}`}
                 readOnly={busy}
-                disabled={!!pending}
+                disabled={reviewing}
                 aria-label="Message"
                 rows={1}
               />
@@ -684,14 +964,14 @@ export function ChatPage({ bot }: { bot: Bot }) {
             </>
           )}
           {hasText && voice.state === "idle" ? (
-            <button type="submit" className="round-send" disabled={busy || !!pending} aria-label="Send" title="Send">
+            <button type="submit" className="round-send" disabled={busy || reviewing} aria-label="Send" title="Send">
               <ArrowUpIcon />
             </button>
           ) : (
             <button
               type="button"
               className={`round-send voice ${voice.state}`}
-              onClick={voice.state === "idle" ? voice.start : voice.stop}
+              onClick={voice.state === "idle" ? startVoice : voice.stop}
               disabled={voice.state === "closing"}
               aria-pressed={voice.state !== "idle"}
               title={VOICE_LABEL[voice.state]}
