@@ -9,7 +9,7 @@ itself, not written by the AI.
 
 > HackMeridian 2026 · Stellar Unlocked track · **testnet only**
 
-![Nilo home: chat with quick actions for sending, checking the balance, claiming and recovering](docs/screenshots/home.png)
+![Nilo home: chat with quick actions for sending, checking the balance, claiming and recovering](docs/screenshots/home.webp)
 
 ## Contents
 
@@ -87,7 +87,7 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 
 This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every line comes from the transaction bytes:
 
-![The explanation card decoded from the XDR, with the Sign and send button](docs/screenshots/review.png)
+![The explanation card decoded from the XDR, with the Sign and send button](docs/screenshots/review.webp)
 
 ## Quick start
 
@@ -145,7 +145,7 @@ Helper scripts:
 <details>
 <summary>On a phone</summary>
 
-<img src="docs/screenshots/mobile.png" alt="Nilo home on a phone" width="320">
+<img src="docs/screenshots/mobile.webp" alt="Nilo home on a phone" width="320">
 
 </details>
 
