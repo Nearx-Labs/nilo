@@ -55,7 +55,8 @@ app.post("/api/faucet", async (c) => {
   const parsed = FaucetRequest.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ message: "Invalid address." }, 400);
   // Behind a reverse proxy every request comes from the proxy: set TRUST_PROXY=1 to use X-Forwarded-For.
-  const forwarded = process.env.TRUST_PROXY === "1" ? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() : undefined;
+  // Its last entry is the one our proxy added; earlier ones come from the client and can be forged.
+  const forwarded = process.env.TRUST_PROXY === "1" ? c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim() : undefined;
   const ip = forwarded || getConnInfo(c).remote.address || "unknown";
   try {
     return c.json(await requestFaucet(parsed.data, ip));

@@ -27,9 +27,11 @@ RUN npx esbuild apps/server/src/index.ts --bundle --platform=node --format=esm -
 
 FROM node:24.22.1-slim
 WORKDIR /app
+# TRUST_PROXY: the image runs behind Traefik, so the faucet's per-IP limit reads the client IP from X-Forwarded-For.
 ENV NODE_ENV=production \
     PORT=5173 \
-    STATIC_DIR=public
+    STATIC_DIR=public \
+    TRUST_PROXY=1
 
 COPY --from=build /app/dist/server.mjs ./server.mjs
 COPY --from=build /app/apps/web/dist ./public

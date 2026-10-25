@@ -1,8 +1,9 @@
-// First sign-in: the user picks an investor profile while the account is set up
-// in the background (account, USDC trustline, test USDC; see useAutoTrustline).
-// The second step shows that setup finishing before the chat opens.
+// First sign-in: the user answers the investor questionnaire, which sets their
+// profile, while the account is set up in the background (account, USDC
+// trustline, test USDC; see useAutoTrustline). The last step shows that setup
+// finishing before the chat opens.
 import { useEffect, useRef, useState } from "react";
-import { PROFILES, type InvestorProfile, useProfile } from "../profile";
+import { MAX_SCORE, MIN_SCORE, PROFILES, QUESTIONS, scoreProfile, useProfile } from "../profile";
 import { type SetupStep, useSetupStatus, useWallet } from "../wallet";
 import { CloseIcon, RefreshIcon } from "./icons";
 
@@ -13,14 +14,19 @@ const ITEMS: { step: SetupStep; label: string }[] = [
 ];
 
 /**
- * `first`: the profile is required and the setup step follows.
- * `edit`: change the profile only; closable like any dialog.
+ * `first`: the questionnaire is required and the setup step follows.
+ * `edit`: retake the questionnaire only; closable like any dialog.
  */
 export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose: () => void }) {
   const { address, custody } = useWallet();
-  const [profile, setProfile] = useProfile(address);
-  const [picked, setPicked] = useState<InvestorProfile | null>(profile);
-  const [phase, setPhase] = useState<"profile" | "setup">("profile");
+  const [, setProfile] = useProfile(address);
+  const [phase, setPhase] = useState<"quiz" | "result" | "setup">("quiz");
+  // Index of the chosen option per question; kept so Back shows earlier answers.
+  const [answers, setAnswers] = useState<(number | null)[]>(() => QUESTIONS.map(() => null));
+  const [current, setCurrent] = useState(0);
+  const question = QUESTIONS[current];
+  const score = answers.reduce<number>((sum, a, i) => sum + (a === null ? 0 : QUESTIONS[i].options[a].points), 0);
+  const result = PROFILES.find((p) => p.id === scoreProfile(score))!;
   const status = useSetupStatus(address);
   const dialog = useRef<HTMLDivElement>(null);
   const closable = mode === "edit";
@@ -67,14 +73,35 @@ export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose:
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [closable, onClose]);
 
-  useEffect(() => dialog.current?.focus(), [phase]);
+  useEffect(() => dialog.current?.focus(), [phase, current]);
 
-  function confirmProfile() {
-    if (!picked) return;
-    setProfile(picked);
+  // Picking an answer moves on by itself (Back and Next still work); the last one waits for "See my profile".
+  const advance = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(advance.current), []);
+  function choose(option: number) {
+    setAnswers((a) => a.map((v, q) => (q === current ? option : v)));
+    window.clearTimeout(advance.current);
+    if (current < QUESTIONS.length - 1) advance.current = window.setTimeout(() => setCurrent(current + 1), 260);
+  }
+
+  function next() {
+    if (answers[current] === null) return;
+    if (current < QUESTIONS.length - 1) {
+      setCurrent(current + 1);
+      return;
+    }
+    // Saved now, so a reload during setup does not ask again.
+    setProfile(result.id);
+    setPhase("result");
+  }
+
+  function finishResult() {
     if (mode === "first" && custody === "internal") setPhase("setup");
     else onClose();
   }
+
+  const title =
+    phase === "quiz" ? "What kind of investor are you?" : phase === "result" ? "Your investor profile" : "Getting your account ready";
 
   return (
     <div
@@ -87,7 +114,7 @@ export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose:
     >
       <div ref={dialog} className="modal onboarding" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" tabIndex={-1}>
         <header className="modal-head">
-          <h2 id="onboarding-title">{phase === "profile" ? "What kind of investor are you?" : "Getting your account ready"}</h2>
+          <h2 id="onboarding-title">{title}</h2>
           {closable && (
             <button type="button" className="icon-btn ghost" onClick={onClose} aria-label="Close">
               <CloseIcon />
@@ -95,20 +122,64 @@ export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose:
           )}
         </header>
 
-        {phase === "profile" ? (
-          <div className="modal-body onboarding-body">
-            <p className="muted">
-              {mode === "first"
-                ? "Pick the profile that fits you best. Meanwhile we set up your Stellar account."
-                : "You can change your profile at any time."}
-            </p>
-            <div className="profile-grid" role="group" aria-label="Investor profile">
-              {PROFILES.map((p) => (
-                <button key={p.id} type="button" className="profile-card" aria-pressed={picked === p.id} onClick={() => setPicked(p.id)}>
-                  <strong>{p.label}</strong>
-                  <span>{p.text}</span>
+        {phase === "quiz" ? (
+          <div className="modal-body onboarding-body quiz">
+            {current === 0 && mode === "first" && (
+              <p className="muted small">Five quick questions to find your profile. Meanwhile we set up your Stellar account.</p>
+            )}
+            <div className="quiz-progress" aria-label={`Question ${current + 1} of ${QUESTIONS.length}`}>
+              <ol className="quiz-steps" aria-hidden="true">
+                {QUESTIONS.map((q, i) => (
+                  <li key={q.id} className={i < current ? "done" : i === current ? "current" : ""} />
+                ))}
+              </ol>
+              <span className="quiz-count">
+                {current + 1}/{QUESTIONS.length}
+              </span>
+            </div>
+            <div className="quiz-question">
+              <span className="quiz-category">{question.category}</span>
+              <p className="quiz-prompt" id="quiz-prompt">
+                {question.prompt}
+              </p>
+            </div>
+            <div className="quiz-options" role="radiogroup" aria-labelledby="quiz-prompt">
+              {question.options.map((o, i) => (
+                <button
+                  key={o.letter}
+                  type="button"
+                  role="radio"
+                  className="quiz-option"
+                  aria-checked={answers[current] === i}
+                  onClick={() => choose(i)}
+                >
+                  <span className="quiz-letter" aria-hidden="true">
+                    {o.letter}
+                  </span>
+                  <span className="quiz-text">{o.text}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        ) : phase === "result" ? (
+          <div className="modal-body onboarding-body quiz-result">
+            <span className="quiz-category">Your profile</span>
+            <p className="quiz-profile">{result.label}</p>
+            <p className="quiz-detail">{result.detail}</p>
+            <div className="score-meter" role="img" aria-label={`Score ${score} of ${MAX_SCORE}`}>
+              <div className="score-zones" aria-hidden="true">
+                {PROFILES.map((p) => (
+                  <span key={p.id} className={p.id === result.id ? "on" : ""}>
+                    {p.label}
+                  </span>
+                ))}
+              </div>
+              <div className="score-track" aria-hidden="true">
+                <i style={{ left: `${((score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)) * 100}%` }} />
+              </div>
+              <span className="muted small">
+                Score {score} of {MAX_SCORE}
+              </span>
             </div>
           </div>
         ) : (
@@ -139,10 +210,25 @@ export function Onboarding({ mode, onClose }: { mode: "first" | "edit"; onClose:
           </div>
         )}
 
-        <footer className="modal-foot">
-          {phase === "profile" ? (
-            <button type="button" disabled={!picked} onClick={confirmProfile}>
-              {mode === "first" ? "Continue" : "Save"}
+        <footer className={`modal-foot${phase === "quiz" ? " split" : ""}`}>
+          {phase === "quiz" ? (
+            <>
+              <button
+                type="button"
+                className="secondary quiz-back"
+                onClick={() => setCurrent(current - 1)}
+                disabled={current === 0}
+                style={current === 0 ? { visibility: "hidden" } : undefined}
+              >
+                Back
+              </button>
+              <button type="button" disabled={answers[current] === null} onClick={next}>
+                {current < QUESTIONS.length - 1 ? "Next" : "See my profile"}
+              </button>
+            </>
+          ) : phase === "result" ? (
+            <button type="button" onClick={finishResult}>
+              {mode === "first" && custody === "internal" ? "Continue" : "Done"}
             </button>
           ) : (
             <button type="button" disabled={!ready} onClick={onClose}>
