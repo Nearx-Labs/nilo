@@ -192,8 +192,13 @@ a.rail-card:hover { border-color: #2a6a50; }
 .bubble.user { align-self: flex-end; background: var(--accent-grad); color: #fff; border-bottom-right-radius: 6px; }
 .bubble.assistant { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); border-bottom-left-radius: 6px; }
 
-.form-wrap { display: flex; flex-direction: column; gap: 10px; }
+.form-wrap {
+  display: flex; flex-direction: column; gap: 14px; padding: 18px 22px 22px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.form-wrap .form { background: none; border: none; padding: 0; }
 .form-head { display: flex; align-items: center; justify-content: space-between; }
+.form-head strong { font-size: 15px; font-weight: 600; }
 .form-head .icon-button { width: 36px; height: 36px; }
 
 .page-head { display: flex; flex-direction: column; gap: 8px; padding-top: 16px; }

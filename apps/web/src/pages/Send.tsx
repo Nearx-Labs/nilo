@@ -176,16 +176,31 @@ export function SendPage() {
   return (
     <div className="stack chat-page page-wide">
       <header className="page-head">
-        <span className="eyebrow">Chat</span>
-        <h1>
-          Hi! I'm <span className="accent-word">Nilo</span>
-        </h1>
-        <p className="muted">
-          <strong className="lead">Your payments agent on Stellar.</strong>{" "}
-          {fresh
-            ? "Tell me who should get what and how long they have. I build the transaction, explain it in plain words before you sign, and you get it back if nobody claims it."
-            : "Ask for another payment, check your balance, or start over."}
-        </p>
+        {pending ? (
+          <>
+            <span className="eyebrow">Review</span>
+            <h1>
+              Check it, then <span className="accent-word">sign</span>
+            </h1>
+            <p className="muted">
+              <strong className="lead">Nothing is sent until you sign.</strong> Every line below is decoded from the
+              transaction itself, not written by the AI.
+            </p>
+          </>
+        ) : (
+          <>
+            <span className="eyebrow">Chat</span>
+            <h1>
+              Hi! I'm <span className="accent-word">Nilo</span>
+            </h1>
+            <p className="muted">
+              <strong className="lead">Your payments agent on Stellar.</strong>{" "}
+              {fresh
+                ? "Tell me who should get what and how long they have. I build the transaction, explain it in plain words before you sign, and you get it back if nobody claims it."
+                : "Ask for another payment, check your balance, or start over."}
+            </p>
+          </>
+        )}
         <div className="row">
           {address && (
             <>
