@@ -1,114 +1,172 @@
-# stellar-dots
+# Nilo
 
-Chat-driven Stellar payments that can't get lost. "Send 50 TESTUSD to maria, she has 2 minutes" becomes a
-**claimable balance**: the recipient can claim it before the deadline; after it, only the sender can recover it.
-Before signing, the app explains the transaction **decoded from its XDR** with fixed templates. The AI never sees
-keys, never builds transactions and never writes the explanation.
+**Stellar payments that can't get lost.** Type "send 50 TESTUSD to maria, she has 2 minutes" and Nilo sends it as a
+claimable balance. Maria can claim it before the deadline. After the deadline, only you can take it back. If you
+typed the wrong address, the money comes home.
 
-HackMeridian 2026 · Stellar Unlocked · testnet only.
+Before you sign, Nilo explains the transaction in plain English. That explanation is decoded from the transaction
+itself, not written by the AI.
 
-## Layout
+> HackMeridian 2026 · Stellar Unlocked track · **testnet only**
 
-| Path | What |
-|---|---|
-| `packages/core` | Pure TS: intent schema, validation, transaction builder, XDR explainer, predicate evaluation. Tests here. |
-| `apps/server` | Hono, one endpoint `POST /api/extract`: chat → `{amount, asset, recipient, deadlineSeconds}` via OpenAI (`gpt-5.4-mini` by default, `OPENAI_MODEL` to change). |
-| `apps/web` | Vite + React. `/send` (chat or form), `/claim` (recipient), `/sent` (sender recovers). Login and signing through [Pollar](https://pollar.xyz): Freighter/Albedo or an email/Google wallet. |
-| `scripts/setup-testnet.ts` | Creates issuer + TESTUSD, funds alice/maria/bob via Friendbot, writes `packages/core/src/demo.json` and `.env.demo` (secrets). |
-| `scripts/reset-maria.ts` | `npm run demo:reset-maria`: maria returns her TESTUSD and drops the trustline, so the next claim shows `changeTrust + claim`. |
-| `scripts/smoke-testnet.ts` | Full flow on testnet without a wallet: send → claim (+trustline), send to a stranger → wait → recover. |
+## Contents
 
-## Run
+- [The problem](#the-problem)
+- [How a payment flows](#how-a-payment-flows)
+- [The recovery rule](#the-recovery-rule)
+- [Why you can trust what you sign](#why-you-can-trust-what-you-sign)
+- [Quick start](#quick-start)
+- [Try the demo](#try-the-demo)
+- [Repository layout](#repository-layout)
+- [Limits of v1](#limits-of-v1)
+- [Next](#next)
 
-```bash
-npm install
-cp .env.example .env              # set OPENAI_API_KEY and VITE_POLLAR_API_KEY
-npm run setup:testnet             # fresh demo accounts (secrets in .env.demo)
-npm test                          # core tests
-npm run dev                       # server :8787 + web :5173 (proxies /api)
+## The problem
+
+A crypto payment is final. One wrong character in an address and the funds are gone, with nobody to call. Chat
+assistants make sending easier, which makes the risk worse: now the payment also depends on a model reading your
+sentence correctly.
+
+Nilo addresses both halves with Stellar's own primitives:
+
+- **Every payment is recoverable by design.** It is a claimable balance with two claimants: the recipient before the
+  deadline, the sender after it. No smart contract, no escrow service, no custody.
+- **The AI never has the last word.** The model only turns your sentence into four fields. Everything after that is
+  deterministic code you can test, and what you read before signing comes from the signed bytes.
+
+## How a payment flows
+
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant AI as Chat agent (LLM)
+    participant N as Nilo (deterministic)
+    participant W as Wallet (via Pollar)
+    participant S as Stellar testnet
+
+    U->>AI: "send 50 TESTUSD to maria, she has 2 minutes"
+    AI-->>N: {amount: "50", asset: "TESTUSD", recipient: "maria", deadlineSeconds: 120}
+    Note over AI: Missing or ambiguous field?<br/>The agent asks instead of guessing.
+    N->>N: Validate: address, allowed asset, ≤ 7 decimals,<br/>balance covers amount + 1 XLM reserve
+    N->>N: Build createClaimableBalance (XDR)
+    N->>N: Decode the XDR into a fixed-template explanation<br/>and check it against what you asked for
+    N-->>U: "Sends 50 TESTUSD to GBYY…O2ZK (maria).<br/>Claimable until 13:26 UTC, then only you can recover it."
+    U->>W: Sign
+    W->>S: Submit
 ```
 
-The **Form** tab on `/send` skips the AI entirely and feeds the same validation, builder and explainer.
+The explanation step accepts only the exact shape Nilo builds. An extra operation, a third claimant, swapped
+deadlines, a memo or a recovery path to someone else all produce **"Do not sign"** instead of a best-effort summary.
 
-Pollar needs some dashboard setup first (domains, redirect URIs, credits): see [One-time setup](#one-time-setup).
+## The recovery rule
 
-In dev, `?watch=G…` on any page loads a public address without logging in (read-only; signing is disabled).
+Each payment is one claimable balance with two time predicates that share the same instant `T`:
 
-## Demo (3–4 min, testnet)
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Pending: sender signs
+    Pending --> Claimed: recipient claims before T
+    Pending --> Recoverable: T passes unclaimed
+    Recoverable --> Recovered: sender claims at or after T
+    Claimed --> [*]
+    Recovered --> [*]
+```
 
-The pitch in one scene: a payment sent to the wrong address comes back. Everything below was run end to end on
-testnet through the UI.
-
-### One-time setup
-
-**Pollar dashboard** (the app's testnet project):
-- **Build → API Keys:** a publishable key (`pub_testnet_…`) in `.env` as `VITE_POLLAR_API_KEY`. Secret keys
-  (`sec_…`) and personal tokens (`pat_…`) are refused by the browser SDK.
-- **Build → Domains:** `http://localhost:5173` under **Allowed origins** *and* under **Allowed redirect URIs**
-  (Google login fails with `APPLICATION_HAS_NO_REDIRECT_URIS` without the second one).
-- **Billing → Credits:** a positive balance. Creating an email/Google wallet is billable; with no credits, login
-  fails with `402 SDK_CREDITS_INSUFFICIENT`. Top up with Circle's test USDC (faucet.circle.com) to the app's
-  Solana Devnet or Polygon Amoy deposit address.
-- Wallets must be G addresses: passkey smart wallets (C…) can't create or claim claimable balances.
-
-**Accounts** (`npm run setup:testnet` once; secrets land in `.env.demo`, never in git):
-
-| Role | How it logs in | Holds |
+| Claimant | Predicate | Meaning |
 |---|---|---|
-| alice (sender) | Pollar → Wallet → Freighter, with `ALICE_SECRET` | TESTUSD (10 000 at setup) |
-| maria (recipient) | Pollar → Wallet → Freighter, with `MARIA_SECRET`, in a second browser profile | XLM only, no trustline |
+| Recipient | `before_absolute_time(T)` | Can claim while the ledger time is before `T` |
+| Sender | `not(before_absolute_time(T))` | Can claim from `T` on |
 
-A fresh email/Google wallet also works as a sender, but it starts with XLM only: send XLM from it, not TESTUSD.
+Two details worth knowing:
 
-### Before each rehearsal
+- **Trustline on claim.** If the recipient's account can't hold the asset yet, the claim transaction adds the
+  trustline first: `changeTrust` + `claimClaimableBalance`, signed once, applied atomically.
+- **Reserve.** While a payment is pending, 1 XLM of the sender's balance is locked (0.5 XLM per claimant). It is
+  released when the balance is claimed or recovered.
 
-```bash
-npm run demo:reset-maria          # maria returns her TESTUSD and drops the trustline
-npm run dev                       # server :8787 + web :5173; restart after any .env change
-```
+Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 180 seconds.
 
-Check that alice's **Sent** tab and maria's **Claim** tab are empty, and that Freighter is on **Testnet** in both
-profiles.
+## Why you can trust what you sign
 
-### Script
+| Guarantee | How |
+|---|---|
+| The model never sees keys or builds transactions | It receives only the chat text and returns a schema-validated JSON intent. |
+| On-chain data can't inject instructions into the model | The model never reads memos, asset names or anything else from the ledger. |
+| The explanation matches the transaction | It is generated from the final XDR by fixed templates, then compared field by field with the validated intent. A mismatch blocks signing. |
+| Nilo never holds funds or keys | Signing happens in the user's wallet: Freighter or Albedo, or a Pollar email/Google wallet. The app only knows public addresses. |
 
-1. **The problem (20 s).** Crypto payments are final: a typo in the address and the money is gone.
+## Quick start
 
-2. **Send (60 s), as alice, Chat tab:**
+**You need:** Node.js 20+, a [Pollar](https://pollar.xyz) testnet app and an OpenAI API key.
+
+1. Install and create your env file:
+
+   ```bash
+   npm install
+   cp .env.example .env
    ```
-   Send 50 TESTUSD to maria, she has 3 minutes
+
+2. Fill in `.env`:
+
+   | Variable | Where it comes from |
+   |---|---|
+   | `OPENAI_API_KEY` | OpenAI. Used only by the chat endpoint; the **Form** tab works without it. |
+   | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. |
+   | `VITE_POLLAR_API_KEY` | Pollar dashboard → Build → API Keys → **publishable** key (`pub_testnet_…`). Never use a secret key here: `VITE_*` values are shipped to the browser. |
+
+3. In the Pollar dashboard, add `http://localhost:5173` as an allowed origin and redirect URI, and make sure the app
+   has credits for wallet creation.
+
+4. Create TESTUSD and the demo accounts. Their secrets are written to `.env.demo`:
+
+   ```bash
+   npm run setup:testnet
    ```
-   (Portuguese works too: *"Manda 50 TESTUSD pra maria, ela tem 3 minutos"*.) If a field is missing, the agent asks
-   instead of guessing. Point at the green **Decoded from the transaction** card: amount, full issuer, maria's full
-   address, the deadline, *"after that only you can recover"*, 1 XLM reserve. It is read from the XDR about to be
-   signed, not written by the AI. **Sign and send** → approve in Freighter.
 
-3. **Claim (45 s), as maria, second profile, Claim tab.** The payment shows as `claimable` with a countdown.
-   **Claim** → the card lists two operations, *add a trustline for TESTUSD* and *claim*, in one transaction →
-   **Sign and claim** → maria holds 50 TESTUSD.
+5. Check the core, then start everything:
 
-4. **The wrong address (60 s), as alice:** Form tab, 25 TESTUSD, 1 minute, recipient a valid address nobody owns:
+   ```bash
+   npm test        # core tests
+   npm run dev     # API on :8787, web app on http://localhost:5173
    ```
-   GAFE5JH7OIU7KS7Q4DXMWWLXOTOXO6UZH4ZZLAGVFHQGSUQRETLCHINT
-   ```
-   The app warns that the account does not exist and still lets you send. Sign. Open **Sent**: the payment is
-   `waiting` with a countdown, then turns `recoverable` at the deadline (the button waits ~5 s more for ledger
-   time). **Recover** → sign → the 25 TESTUSD and the 1 XLM reserve are back.
 
-5. **Close (20 s).** The model never touches keys or builds transactions; the explanation comes from the XDR; every
-   send is recoverable by design, using only Stellar's native claimable balances.
+## Try the demo
 
-### Timing
+The demo uses the nicknames `alice` (sender), `maria` (recipient) and `bob`, all created by `setup:testnet`.
 
-The deadline is fixed when the transaction is built, so time spent reviewing comes out of it: a "2 minutes"
-payment signed after 20 s of talking is claimable for ~1 min 40 s. Use 3 minutes for the claim scene. The wrong-address
-scene needs the full minute of waiting; fill it with the close or with the explanation card.
+| Step | What to do | What you should see |
+|---|---|---|
+| 1. Send | On **Send**, type "send 50 TESTUSD to maria, she has 2 minutes". | An explanation card naming Maria's address and the deadline. |
+| 2. Sign | Sign with your wallet. | The payment shows up as pending on **Sent**. |
+| 3. Claim | As the recipient, open **Claim** before the deadline. | The balance is claimed, with the trustline added if needed. |
+| 4. Recover | Send to an address nobody controls, wait for the deadline, open **Sent**. | A **Recover** action that returns the funds to you. |
 
-### If something fails on stage
+Helper scripts:
 
-- **Chat down** (no `OPENAI_API_KEY`, rate limit): use the **Form** tab; it feeds the same validation, builder and
-  explainer.
-- **Login or Freighter trouble:** `npx tsx scripts/smoke-testnet.ts` runs send → claim → wrong address → recover
-  from the terminal with the demo keys and prints each decoded explanation (about 1 min). It leaves maria with a
-  trustline, so run `npm run demo:reset-maria` afterwards.
-- **Record the whole flow as a backup video** after the first good rehearsal.
+| Command | What it does |
+|---|---|
+| `npx tsx scripts/smoke-testnet.ts` | End-to-end check against testnet without a wallet: send → claim with trustline, then send to a stranger → wait → recover. Needs `.env.demo`. |
+| `npm run demo:reset-maria` | Resets the recipient account between takes. |
+
+## Repository layout
+
+| Path | What it does |
+|---|---|
+| [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation. All the tests live here. |
+| [`apps/server`](apps/server) | One endpoint, `POST /api/extract`: chat messages in, structured intent (or a clarifying question) out. |
+| [`apps/web`](apps/web) | Vite + React. **Send** (chat or form), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. |
+| [`scripts/`](scripts) | Testnet setup, the wallet-free smoke test, and the demo reset. |
+
+## Limits of v1
+
+- Testnet only. The allowed assets are XLM and a self-issued TESTUSD.
+- Recipients are a full `G…` address or a nickname from a fixed demo list (`alice`, `maria`, `bob`).
+- The recipient needs an existing Stellar account with enough XLM for a trustline. A Pollar wallet can get the
+  trustline sponsored from the Claim page.
+- Passkey smart wallets (`C…` addresses) are not supported: claimable balances are classic operations.
+
+## Next
+
+Path payments with a strict worst-case price shown before signing, so "send 50 USDC, pay in XLM" stays just as
+explainable.
