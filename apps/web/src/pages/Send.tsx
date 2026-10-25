@@ -40,6 +40,7 @@ import {
 import { type ChatActionState, MoreMenu, PageTop, QUICK_ACTIONS, TRUST_URL, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
 import { VoiceBar } from "../components/VoiceBar";
+import { VoiceOverlay } from "../components/VoiceOverlay";
 import { getQuote, shortContract } from "../prices";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
@@ -53,6 +54,11 @@ type ExtractResponse =
   | { status: "error"; message: string };
 
 const EXAMPLE = "Send 50 USDC to maria, she has 2 minutes";
+const VOICE_TASKS: Record<string, string> = {
+  get_price: "Checking prices…",
+  get_balance: "Checking your balance…",
+  prepare_send: "Preparing your payment…",
+};
 const VOICE_LABEL = {
   idle: "Voice mode",
   connecting: "Connecting voice mode… (tap to cancel)",
@@ -147,7 +153,7 @@ async function approxValue(amount: string, assetCode: string): Promise<string | 
   return value === null ? null : `≈ ${formatFiat(value, DISPLAY_FIAT)}`;
 }
 
-/** An amount rounded for speech ("9999.9999900" -> "10,000"); the exact one stays on screen. */
+/** An amount rounded for speech ("9999.9999900" -> "10,000"); the chat history keeps the exact one. */
 function spokenAmount(amount: string): string {
   const stroops = toStroops(amount);
   const digits = stroops >= 100n * STROOPS_PER_UNIT ? 0 : stroops >= STROOPS_PER_UNIT ? 2 : 4;
@@ -194,6 +200,8 @@ export function ChatPage({ bot }: { bot: Bot }) {
     setMessages((m) => [...m, { role: "assistant", content }]);
   };
   const voiceProof = useVoiceProof();
+  /** What a voice tool call is doing, shown under the orb. */
+  const [voiceTask, setVoiceTask] = useState<string | null>(null);
   const voice = useVoiceSession({
     onToolCall: runVoiceTool,
     onTranscript: (role, content) => setMessages((m) => [...m, { role, content }]),
@@ -309,7 +317,6 @@ export function ChatPage({ bot }: { bot: Bot }) {
           usdcNote,
         `The user has ${rows.flatMap((r) => r.spoken ?? []).join(", and ")}.` +
           (total ? ` In total about ${total}.` : "") +
-          " The exact amounts are on screen." +
           usdcNote,
       );
     } catch (e) {
@@ -372,6 +379,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
   /** A tool the voice backend asked for. Its arguments are untrusted, like /api/extract's output. */
   async function runVoiceTool(name: string, args: unknown): Promise<string> {
     voiceOut.current = [];
+    setVoiceTask(VOICE_TASKS[name] ?? null);
     try {
       if (name === "get_balance") {
         await answerBalance();
@@ -392,6 +400,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
       return voiceOut.current.join("\n");
     } finally {
       voiceOut.current = null;
+      setVoiceTask(null);
     }
   }
 
@@ -648,6 +657,18 @@ export function ChatPage({ bot }: { bot: Bot }) {
           )}
         </div>
       </div>
+
+      {/* Voice only, no transcript. It steps aside for a payment review, which has to be read and signed. */}
+      {voice.state !== "idle" && !pending && (
+        <VoiceOverlay
+          state={voice.state}
+          levels={voice.levels}
+          spectrum={voice.spectrum}
+          task={voiceTask}
+          name={bot.name}
+          onEnd={voice.stop}
+        />
+      )}
 
       <div className="composer-wrap">
         <form onSubmit={onChat} className="composer">
