@@ -152,6 +152,10 @@ The **Claim** page, as the recipient sees it. It refreshes on its own, so a new 
 
 ![Claim page: payments waiting for the recipient, an empty state and how claiming works](docs/screenshots/claim.webp)
 
+The **Sent** page, as the sender sees it. Once a deadline passes unclaimed, the payment turns recoverable:
+
+![Sent page: a payment nobody claimed before its deadline, with the Recover button](docs/screenshots/sent.webp)
+
 Helper scripts:
 
 | Command | What it does |
