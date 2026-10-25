@@ -276,6 +276,13 @@ a { color: var(--accent); }
 }
 .setup-item.done .setup-mark { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-border); }
 .setup-item.failed .setup-mark { color: var(--bad); background: var(--bad-bg); border-color: var(--bad-border); }
+.quiz-progress { display: flex; flex-direction: column; gap: 8px; color: var(--muted); font-size: 13px; }
+.quiz-bar { height: 4px; border-radius: 4px; background: var(--border-strong); overflow: hidden; }
+.quiz-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.2s ease; }
+.onboarding-body .quiz-prompt { font-size: 17px; font-weight: 600; line-height: 1.4; }
+.quiz-result { align-items: center; text-align: center; gap: 10px; }
+.quiz-result p { margin: 0; line-height: 1.5; }
+.onboarding-body .quiz-profile { font-size: 28px; font-weight: 700; color: var(--accent); }
 .profile-chip {
   margin: 8px 2px 0; padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 400;
   background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 12px;

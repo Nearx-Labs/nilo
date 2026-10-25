@@ -120,7 +120,10 @@ export function Shell({ children }: { children: ReactNode }) {
           ref={sidebar}
           onCreate={openCreate}
           onNavigate={() => setDrawerOpen(false)}
-          onProfile={() => setOnboarding("edit")}
+          onProfile={() => {
+            setDrawerOpen(false);
+            setOnboarding("edit");
+          }}
         />
         <div className="scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
         <main className="main">{children}</main>
