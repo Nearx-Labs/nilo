@@ -17,6 +17,7 @@ itself, not written by the AI.
 - [How a payment flows](#how-a-payment-flows)
 - [The recovery rule](#the-recovery-rule)
 - [Why you can trust what you sign](#why-you-can-trust-what-you-sign)
+- [Prices from Reflector](#prices-from-reflector)
 - [Quick start](#quick-start)
 - [Try the demo](#try-the-demo)
 - [Repository layout](#repository-layout)
@@ -93,6 +94,29 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every line comes from the transaction bytes:
 
 ![The explanation card decoded from the XDR, with the Sign and send button](docs/screenshots/review.webp)
+
+## Prices from Reflector
+
+Nilo also reads live prices from [Reflector](https://reflector.network), Stellar's SEP-40 price oracle, so you can:
+
+- **Ask for a price.** "How much is XLM in BRL?" or "quanto está o bitcoin em reais?"
+- **Send in money.** "Send R$ 5 in XLM to maria, she has 2 minutes" converts reais to XLM before the review.
+- **See values.** Balances and the review show an "≈ US$" value next to each amount.
+
+The rule from payments still holds: **the model never produces a number.** It only extracts the asset, the currency and
+the amount as typed. The price comes from a read-only call to the oracle contract (a simulated `lastprice`, so nothing
+is signed or paid). The conversion uses bigint math and rounds down to 7 decimals, so a payment is never worth more
+than you asked for. Prices older than 15 minutes are refused.
+
+The conversion is shown on the review with its rate, oracle and time, but it is **not part of the transaction**. What
+you sign is the asset amount, explained from the XDR as before.
+
+| Reflector oracle (testnet) | Contract | Used for |
+|---|---|---|
+| External CEX/DEX prices, in USD | `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63` | XLM, BTC, ETH, USDC… |
+| Foreign exchange, in USD | `CCSSOHTBL3LEWUCBBEB5NJFC2OKFRC74OWEIJIZLRJBGAAU4VMU5NV4W` | BRL, EUR, GBP… |
+
+TESTUSD is a test asset with no market, so it is priced as USDC, and the app says so.
 
 ## Quick start
 
@@ -176,9 +200,9 @@ Helper scripts:
 
 | Path | What it does |
 |---|---|
-| [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation. All the tests live here. |
-| [`apps/server`](apps/server) | Two endpoints. `POST /api/extract`: chat messages in, structured intent (or a clarifying question) out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. |
-| [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
+| [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation, price math. All the tests live here. |
+| [`apps/server`](apps/server) | Two endpoints. `POST /api/extract`: chat messages in, a structured send intent, price question or clarifying question out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. |
+| [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance, ask for a price), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
 | [`scripts/`](scripts) | Testnet and sponsor setup, the wallet-free smoke tests, and the demo reset. |
 
 ## Limits of v1

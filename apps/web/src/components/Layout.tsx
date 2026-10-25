@@ -5,8 +5,10 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { config } from "../stellar";
 import { useWallet } from "../wallet";
 import {
+  ChartIcon,
   ChatIcon,
   ChevronIcon,
+  CoinsIcon,
   HistoryIcon,
   InboxIcon,
   SendIcon,
@@ -16,7 +18,7 @@ import {
 } from "./icons";
 
 /** Chat actions the Send page runs when it is opened with this router state. */
-export type ChatAction = "example" | "balance";
+export type ChatAction = "example" | "balance" | "price" | "fiat";
 export interface ChatActionState {
   action: ChatAction;
   /** Makes a repeated click a new navigation. */
@@ -37,6 +39,8 @@ export const QUICK_ACTIONS: QuickAction[] = [
   { title: "Check balance", hint: "View your available funds", Icon: WalletIcon, tone: "blue", to: "/send", action: "balance" },
   { title: "Claim a payment", hint: "See what's waiting for you", Icon: InboxIcon, tone: "green", to: "/claim" },
   { title: "Sent payments", hint: "Track or recover what you sent", Icon: HistoryIcon, tone: "purple", to: "/sent" },
+  { title: "Check a price", hint: "Live on-chain rates from Reflector", Icon: ChartIcon, tone: "blue", to: "/send", action: "price" },
+  { title: "Send in reais", hint: "Pay R$ worth of XLM", Icon: CoinsIcon, tone: "violet", to: "/send", action: "fiat" },
 ];
 
 export function useQuickAction() {
