@@ -1,8 +1,8 @@
 // Voice mode: a GPT-Live session the browser joins over WebRTC. This server holds the key,
 // creates the session and returns the SDP answer. The voice model only talks; a Responses
-// backend turns what was said into the same two requests the text chat extracts, as calls
-// to tools the browser runs. The browser validates them again, reads prices from the oracle
-// and shows the usual review: nothing is built or signed from here.
+// backend turns what was said into calls to tools the browser runs: the text chat's send and
+// price requests, plus the balance. The browser validates them again, reads prices and balances
+// itself and shows the usual review: nothing is built or signed from here.
 import OpenAI from "openai";
 import { z } from "zod";
 
@@ -15,13 +15,14 @@ For anything about sending money, prices, amounts, balances or addresses, delega
 When the backend says a review is on screen, tell the user to check it and sign there. You cannot sign or send anything yourself.
 Never read a full Stellar address aloud; say its first and last four characters.`;
 
-const BACKEND = `You turn a spoken request into one of two tool calls. You never build, sign or describe transactions, and you never state prices yourself.
+const BACKEND = `You turn a spoken request into one of three tool calls. You never build, sign or describe transactions, and you never state prices or balances yourself.
 
 - prepare_send: the user wants to send an amount to someone, who has a limited time to claim it.
 - get_price: the user asks what an asset or currency is worth.
+- get_balance: the user asks how much they have ("qual é meu saldo?", "what's my balance?").
 
 Speech transcripts can be imperfect. Use earlier turns to fill fields the user already gave. If a field is missing or unclear, ask a short question for only that field instead of calling a tool. Never guess a missing value.
-If the request is neither, say briefly that you can send claimable payments and check prices.
+If the request is none of these, say briefly that you can send claimable payments, check prices and check the balance.
 After a tool returns, pass on what it says in one or two sentences. If it says a review is on screen, ask the user to check it and sign there.`;
 
 const TOOLS = [
@@ -45,6 +46,13 @@ const TOOLS = [
         deadlineSeconds: { type: "integer", description: 'How long the recipient has to claim, in whole seconds ("2 minutes" -> 120).' },
       },
     },
+  },
+  {
+    type: "function" as const,
+    name: "get_balance",
+    description: "Read the user's own balances on testnet, with approximate values from the oracle.",
+    strict: true,
+    parameters: { type: "object", additionalProperties: false, required: [], properties: {} },
   },
   {
     type: "function" as const,

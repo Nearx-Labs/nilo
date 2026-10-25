@@ -240,8 +240,13 @@ export function ChatPage({ bot }: { bot: Bot }) {
     el.style.height = `${Math.min(el.scrollHeight, 6 * 22 + 22)}px`;
   }, [draft, voice.state]);
 
-  async function checkBalance() {
+  /** From the menu or a quick action: shows the question it answers. Voice already has the user's words. */
+  function checkBalance() {
     setMessages((m) => [...m, { role: "user", content: "What's my balance?" }]);
+    return answerBalance();
+  }
+
+  async function answerBalance() {
     if (!address) {
       say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then I can check your balance.");
       connect();
@@ -325,7 +330,9 @@ export function ChatPage({ bot }: { bot: Bot }) {
   async function runVoiceTool(name: string, args: unknown): Promise<string> {
     voiceOut.current = [];
     try {
-      if (name === "get_price") {
+      if (name === "get_balance") {
+        await answerBalance();
+      } else if (name === "get_price") {
         const query = PriceQuerySchema.safeParse(args);
         if (!query.success) return "That price request was incomplete.";
         await answerPrice(query.data);
