@@ -143,7 +143,7 @@ function BalanceRow(props: {
   onMessage: (m: string) => void;
 }) {
   const { view: v, now, address } = props;
-  const { setTrustline } = useWallet();
+  const { setTrustline, custody } = useWallet();
   const [sponsorNeeded, setSponsorNeeded] = useState(false);
   const [busy, setBusy] = useState(false);
   const isRecipient = v.role === "recipient";
@@ -159,7 +159,9 @@ function BalanceRow(props: {
     };
     // Recipients claim for free: Nilo's sponsor pays the fee and any trustline reserve.
     // If the sponsor is unavailable, fall back to a claim the recipient pays for.
-    if (isRecipient && config.sponsor) {
+    // Not for embedded (email/Google) wallets: Pollar only signs transactions whose
+    // source is the wallet itself, and those accounts are funded on creation anyway.
+    if (isRecipient && config.sponsor && custody !== "internal") {
       try {
         return { xdr: await requestSponsoredClaim(v.id, address), check };
       } catch (e) {
@@ -177,7 +179,7 @@ function BalanceRow(props: {
     }
     const xdr = buildClaimTx(v.id, account, config, needsTrust ? { code: v.asset.code, issuer: v.asset.issuer } : undefined);
     return { xdr, check };
-  }, [address, isRecipient, v.id, v.asset.code, v.asset.issuer]);
+  }, [address, custody, isRecipient, v.id, v.asset.code, v.asset.issuer]);
 
   return (
     <article className="card">

@@ -1,11 +1,11 @@
 // Wallet access through Pollar: login (Freighter, Albedo, email, Google…) and
 // signing. The app only ever reads the public address; Pollar or the user's
 // wallet holds the keys.
-import { explain } from "@nilo/core";
+import { hasTrustline } from "@nilo/core";
 import { type SubmitOutcome } from "@pollar/core";
 import { usePollar, walletNotReadyReason } from "@pollar/react";
 import { useEffect, useMemo, useRef } from "react";
-import { config, requestSponsoredTrustline } from "./stellar";
+import { asSnapshot, config, friendbot, loadAccount } from "./stellar";
 
 export class UserCancelled extends Error {}
 
@@ -67,6 +67,7 @@ export function useWallet() {
       custody: stellar?.custody ?? null,
       /** Pollar creates new accounts in the background: CREATING until it is on the ledger. */
       provisioning: stellar?.provisioning ?? null,
+      fundingMode: stellar?.fundingMode ?? null,
       /** Why on-chain actions must wait (the account is still being created), or null. */
       notReady: WATCH ? null : walletNotReadyReason(stellar, "STELLAR"),
       error,
@@ -81,29 +82,47 @@ export function useWallet() {
 }
 
 /**
- * Pollar creates the account of a new embedded wallet (email, Google…) but never
- * its trustlines. Once the account is on the ledger, Nilo's sponsor adds the ones
- * for the app's assets, paying the fee and reserve; the user only signs.
- * External wallets are skipped: they would get a signature prompt nobody asked for.
+ * Gets a new embedded wallet (email, Google…) ready to use on testnet:
+ * 1. The account. Pollar normally creates it in the background, but a wallet can
+ *    come back without it (provisioning NONE, deferred funding, or READY with no
+ *    account on the ledger). Unless Pollar says it is CREATING, Friendbot creates
+ *    and funds it: no signature needed, testnet only.
+ * 2. The trustlines for the app's assets, which Pollar never adds on its own.
+ *    Pollar's setTrustline builds and submits them server-side (its embedded
+ *    signer only signs transactions whose source is the wallet itself). If the
+ *    Pollar app has no app wallet to sponsor them, the account pays its own reserve.
+ * Runs once per address per page load, so a failure never turns into a stream of
+ * signature prompts. External wallets are skipped for the same reason.
  */
 export function useAutoTrustline() {
-  const { address, custody, provisioning, signAndSubmit } = useWallet();
+  const { address, custody, provisioning, fundingMode, setTrustline } = useWallet();
   const tried = useRef(new Set<string>());
   useEffect(() => {
-    if (WATCH || !config.sponsor || !address || custody !== "internal") return;
-    if (provisioning && provisioning !== "READY") return;
+    if (WATCH || !address || custody !== "internal") return;
+    if (provisioning === "CREATING" || provisioning === "FAILED") return;
     if (tried.current.has(address)) return;
     tried.current.add(address);
     (async () => {
-      const xdr = await requestSponsoredTrustline(address);
-      if (!xdr) return;
-      const e = explain(xdr, config);
-      if (e.kind !== "trustline" || e.fields.account !== address) throw new Error(`refusing to sign: ${e.lines[0]}`);
-      await signAndSubmit(xdr);
+      let account = await loadAccount(address);
+      if (!account) {
+        console.info(`Account ${address} is not on testnet (Pollar provisioning: ${provisioning}, funding: ${fundingMode}). Creating it with Friendbot.`);
+        await friendbot(address);
+        account = await loadAccount(address);
+        if (!account) throw new Error("Friendbot funded the account but Horizon does not show it yet.");
+      }
+      for (const asset of config.assets) {
+        if (!asset.issuer || hasTrustline(asSnapshot(account), asset)) continue;
+        const spec = { code: asset.code, issuer: asset.issuer };
+        let out = await setTrustline(spec);
+        // An app with no Pollar app wallet on this network can't sponsor: the account pays its own reserve.
+        if (out.status === "error" && /APP_WALLET_NOT_FOUND/.test(out.details ?? "")) {
+          out = await setTrustline(spec, { skipSponsorship: true });
+        }
+        if (out.status === "error") throw new Error(`${asset.code} trustline: ${out.details ?? "refused"}`);
+      }
     })().catch((e) => {
-      // Not fatal: a sponsored claim adds the trustline too. Retry when the wallet state changes.
-      tried.current.delete(address);
-      console.warn("Could not add the trustline:", (e as Error).message ?? e);
+      // Not fatal: claiming a payment adds the trustline too.
+      console.warn("Could not set up the account:", (e as Error).message ?? e);
     });
-  }, [address, custody, provisioning, signAndSubmit]);
+  }, [address, custody, provisioning, fundingMode, setTrustline]);
 }
