@@ -41,20 +41,9 @@ export interface ClaimFields {
   validUntil?: number;
 }
 
-export interface TrustlineFields {
-  /** Transaction source: the app's sponsor, which pays the fee and the reserve. */
-  source: string;
-  /** Account that gets the trustline. */
-  account: string;
-  asset: AssetSpec;
-  fee: string;
-  validUntil?: number;
-}
-
 export type Explanation =
   | { kind: "send"; fields: SendFields; lines: string[] }
   | { kind: "claim"; fields: ClaimFields; lines: string[] }
-  | { kind: "trustline"; fields: TrustlineFields; lines: string[] }
   | { kind: "unrecognized"; reason: string; lines: string[] };
 
 function spec(asset: Asset): AssetSpec {
@@ -168,24 +157,6 @@ export function explain(xdrBase64: string, config: AppConfig): Explanation {
   }
 
   const claimOp = ops[ops.length - 1];
-  if (sponsored && ops.length === 3 && claimOp.type === "endSponsoringFutureReserves") {
-    const account = claimOp.source;
-    if (!account || account === tx.source) return unrecognized("the sponsor account adds a trustline to itself.");
-    const asset = sponsoredTrust(ops, tx.source, account);
-    if (typeof asset === "string") return unrecognized(asset);
-    if (!config.assets.some((a) => a.code === asset.code && a.issuer === asset.issuer)) {
-      return unrecognized(`${assetLabel(asset)} is not an asset this app uses.`);
-    }
-    return {
-      kind: "trustline",
-      fields: { source: tx.source, account, asset, fee, validUntil },
-      lines: [
-        `Adds a trustline so your account ${account} can hold ${assetLabel(asset)}.`,
-        `Nilo's sponsor account ${tx.source} pays the network fee and the 0.5 XLM trustline reserve. Your XLM balance does not change.`,
-        ...footer,
-      ],
-    };
-  }
   if (sponsored) {
     if (claimOp.type !== "claimClaimableBalance" || !claimOp.source || claimOp.source === tx.source) {
       return unrecognized("the sponsor account is the source but this is not a claim by someone else.");
