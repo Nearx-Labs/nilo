@@ -5,8 +5,10 @@ import {
   mismatches,
   validateIntent,
 } from "@nilo/core";
-import { type FormEvent, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { ChevronIcon, CloseIcon, PlusIcon, SendIcon, SparkleIcon } from "../components/icons";
+import { type ChatActionState, QUICK_ACTIONS, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
@@ -44,6 +46,47 @@ export function SendPage() {
   const [sent, setSent] = useState<{ deadline: number; balanceId: string } | null>(null);
 
   const say = (content: string) => setMessages((m) => [...m, { role: "assistant", content }]);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const runQuick = useQuickAction();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Quick actions (here or in the rail) arrive as router state; run once, then clear it.
+  useEffect(() => {
+    const state = location.state as ChatActionState | null;
+    if (!state?.action) return;
+    navigate(location.pathname, { replace: true, state: null });
+    if (state.action === "example") {
+      setMode("chat");
+      setDraft(EXAMPLE);
+      setTimeout(() => input.current?.focus());
+    } else {
+      checkBalance();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
+
+  async function checkBalance() {
+    setMessages((m) => [...m, { role: "user", content: "What's my balance?" }]);
+    if (!address) {
+      say("Sign in first (button at the top right), then I can check your balance.");
+      connect();
+      return;
+    }
+    try {
+      const account = await loadAccount(address);
+      if (!account) {
+        say("Your account is not on testnet yet. Fund it with Friendbot on the Claim page.");
+        return;
+      }
+      const lines = account.balances.map((b) =>
+        b.asset_type === "native" ? `${b.balance} XLM` : `${b.balance} ${"asset_code" in b ? b.asset_code : "pool share"}`,
+      );
+      say(`Your available funds:\n${lines.map((l) => `• ${l}`).join("\n")}`);
+    } catch (e) {
+      say(`I couldn't load your balance: ${(e as Error).message}`);
+    }
+  }
 
   async function startReview(intent: SendIntent) {
     const from = address;
@@ -65,8 +108,8 @@ export function SendPage() {
     }
   }
 
-  async function onChat(e: FormEvent) {
-    e.preventDefault();
+  async function onChat(e?: FormEvent) {
+    e?.preventDefault();
     const text = draft.trim();
     if (!text || busy) return;
     const next = [...messages, { role: "user" as const, content: text }];
@@ -120,53 +163,102 @@ export function SendPage() {
     say("Cancelled. Nothing was sent.");
   }
 
-  return (
-    <div className="stack">
-      <div className="tabs">
-        <button className={mode === "chat" ? "" : "secondary"} onClick={() => setMode("chat")}>
-          Chat
-        </button>
-        <button className={mode === "form" ? "" : "secondary"} onClick={() => setMode("form")}>
-          Form
-        </button>
-      </div>
+  const fresh = messages.length === 0 && !pending;
 
-      {mode === "chat" ? (
-        <section className="chat">
-          <div className="chat-log">
-            {messages.length === 0 && (
-              <p className="muted">
-                Try: <button className="link" onClick={() => setDraft(EXAMPLE)}>{EXAMPLE}</button>
-              </p>
-            )}
-            {messages.map((m, i) => (
-              <div key={i} className={`bubble ${m.role}`}>
-                {m.content}
-              </div>
-            ))}
-            {busy && <div className="bubble assistant muted">…</div>}
-          </div>
-          <form onSubmit={onChat} className="row">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Who should get what, and how long do they have?"
-              disabled={busy || !!pending}
-              aria-label="Message"
-            />
-            <button disabled={busy || !draft.trim() || !!pending}>Send</button>
-          </form>
-        </section>
-      ) : (
+  return (
+    <div className="stack chat-page">
+      {fresh && (
         <>
-          <IntentForm disabled={!!pending} onSubmit={startReview} />
-          {messages.length > 0 && messages[messages.length - 1].role === "assistant" && (
-            <p className="muted">{messages[messages.length - 1].content}</p>
-          )}
+          <section className="hero">
+            <span className="hero-avatar">
+              <SparkleIcon width={34} height={34} />
+            </span>
+            <div>
+              <h1>
+                Hi! I'm <span className="accent">Nilo</span>
+              </h1>
+              <p>
+                Your payments agent on Stellar. Tell me who should get what and how long they have. I build the
+                transaction, explain it in plain words before you sign, and you get it back if nobody claims it.
+              </p>
+            </div>
+          </section>
+          <div className="action-grid">
+            {QUICK_ACTIONS.map((a) => (
+              <button key={a.title} className="action-card" onClick={() => runQuick(a)}>
+                <span className="icon-tile plain">
+                  <a.Icon />
+                </span>
+                <span className="action-text">
+                  <strong>{a.title}</strong>
+                  <span>{a.hint}</span>
+                </span>
+                <ChevronIcon className="chevron" />
+              </button>
+            ))}
+          </div>
+          <p className="divider-label">
+            <span>Or just type your request</span>
+          </p>
         </>
       )}
 
-      <p className="muted small">
+      {messages.length > 0 && (
+        <div className="chat-log">
+          {messages.map((m, i) => (
+            <div key={i} className={`bubble ${m.role}`}>
+              {m.content}
+            </div>
+          ))}
+          {busy && <div className="bubble assistant muted">…</div>}
+        </div>
+      )}
+
+      {mode === "chat" ? (
+        <form onSubmit={onChat} className="composer">
+          <textarea
+            ref={input}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onChat();
+              }
+            }}
+            placeholder="Who should get what, and how long do they have?"
+            disabled={busy || !!pending}
+            aria-label="Message"
+            rows={2}
+          />
+          <div className="composer-bar">
+            <button type="button" className="icon-button" onClick={() => setMode("form")} title="Use the form instead" aria-label="Use the form instead">
+              <PlusIcon />
+            </button>
+            {fresh && (
+              <button type="button" className="link small" onClick={() => setDraft(EXAMPLE)}>
+                Try: {EXAMPLE}
+              </button>
+            )}
+            <button className="send-button" disabled={busy || !draft.trim() || !!pending}>
+              <SendIcon width={18} height={18} /> Send
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="form-wrap">
+          <div className="form-head">
+            <strong>New payment</strong>
+            <button type="button" className="icon-button" onClick={() => setMode("chat")} title="Back to chat" aria-label="Back to chat">
+              <CloseIcon />
+            </button>
+          </div>
+          <IntentForm disabled={!!pending} onSubmit={startReview} />
+        </div>
+      )}
+
+      {/* The rail lists contacts on wide screens; this copy shows when it is hidden. */}
+      <p className="muted small contacts-inline">
         Contacts: {Object.keys(config.contacts).join(", ")}. Or paste a full G… address.
       </p>
 
