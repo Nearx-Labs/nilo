@@ -148,6 +148,10 @@ The demo uses the nicknames `alice` (sender), `maria` (recipient) and `bob`, all
 | 3. Claim | As the recipient, open **Claim** before the deadline. | The explanation says Nilo's sponsor pays the fee and the trustline reserve. The balance is claimed and Maria's XLM is unchanged. |
 | 4. Recover | Send to an address nobody controls, wait for the deadline, open **Sent**. | A **Recover** action that returns the funds to you. |
 
+The **Claim** page, as the recipient sees it. It refreshes on its own, so a new payment shows up without a reload:
+
+![Claim page: payments waiting for the recipient, an empty state and how claiming works](docs/screenshots/claim.webp)
+
 Helper scripts:
 
 | Command | What it does |
