@@ -4,7 +4,7 @@ import { CloseIcon } from "./icons";
 import { VoiceOrb } from "./VoiceOrb";
 
 /**
- * Voice mode as a full-screen, voice-only experience: the animated orb, one word of state and
+ * Voice mode as a voice-only experience filling the chat panel: the animated orb, one word of state and
  * what the assistant is doing, no transcript. The conversation still goes to the chat history,
  * which shows again when voice mode ends.
  */
@@ -40,7 +40,7 @@ export function VoiceOverlay({
     state === "connecting" ? "Connecting…" : state === "closing" ? "Ending…" : speaking ? `${name} is speaking` : "Listening";
 
   return (
-    <div className={`voice-overlay ${state}${speaking ? " speaking" : ""}`} role="dialog" aria-modal="true" aria-label="Voice mode">
+    <div className={`voice-overlay ${state}${speaking ? " speaking" : ""}`} role="region" aria-label="Voice mode">
       <p className="voice-overlay-tag">Voice mode · experimental</p>
       <div className="voice-overlay-center">
         <VoiceOrb state={state} levels={levels} spectrum={spectrum} onSpeakingChange={setSpeaking} />

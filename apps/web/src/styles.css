@@ -244,18 +244,19 @@ a { color: var(--accent); }
 }
 
 /* ---------- Voice mode overlay (experimental) ---------- */
+/* Fills the chat panel (.view), not the window: the sidebar stays. Above the page header, under Pollar's dialogs. */
 .voice-overlay {
-  position: fixed; inset: 0; z-index: 40;
+  position: absolute; inset: 0; z-index: 6; container-type: size;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between;
   padding: max(20px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
   background: radial-gradient(circle at 50% 45%, #0d1a2b 0%, #070b12 55%, #030508 100%);
   color: #dfe8f5; animation: voice-overlay-in 0.25s ease-out;
 }
 .voice-overlay.speaking { background: radial-gradient(circle at 50% 45%, #241a0c 0%, #0c0905 55%, #050403 100%); }
-@keyframes voice-overlay-in { from { opacity: 0; transform: scale(1.02); } }
+@keyframes voice-overlay-in { from { opacity: 0; } }
 .voice-overlay-tag { margin: 0; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: #6f8099; }
 .voice-overlay-center { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
-.voice-orb { display: block; width: min(78vw, 400px, 58dvh); aspect-ratio: 1; }
+.voice-orb { display: block; width: min(78cqw, 400px, 58cqh); aspect-ratio: 1; }
 .voice-overlay-status {
   margin: 4px 0 0; font-size: 22px; font-weight: 300; letter-spacing: 0.08em; text-transform: uppercase;
   color: #9fd2ff; transition: color 0.3s;
