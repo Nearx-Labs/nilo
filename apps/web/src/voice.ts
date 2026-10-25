@@ -51,7 +51,8 @@ export function useVoiceSession(handlers: VoiceHandlers) {
 
   /** `getProof` may ask the wallet to sign; it runs after the click's audio setup, before the microphone. */
   async function start(getProof: () => Promise<VoiceProof>) {
-    if (state !== "idle") return;
+    // A session already starting or running (checked on the ref, not the state, so a double click can't open two).
+    if (teardown.current) return;
     setState("connecting");
     const pc = new RTCPeerConnection();
     const audio = new Audio();
@@ -65,12 +66,23 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       return analyser;
     };
     let mic: MediaStream | null = null;
+    let dc: RTCDataChannel | null = null;
     const timers: number[] = [];
     let done = false;
+    /** The server has asked OpenAI for the session: from here it may exist, and is billed until closed. */
+    let requested = false;
+    /** The user hung up before the session started: close it as soon as it does. */
+    let closeOnStart = false;
 
+    const send = (event: object) => {
+      if (dc?.readyState !== "open") return false;
+      dc.send(JSON.stringify(event));
+      return true;
+    };
     const cleanup = () => {
       if (done) return;
       done = true;
+      window.removeEventListener("pagehide", onPageHide);
       timers.forEach(clearTimeout);
       mic?.getTracks().forEach((t) => t.stop());
       pc.close();
@@ -80,7 +92,29 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       teardown.current = hangup.current = null;
       setState("idle");
     };
-    teardown.current = cleanup;
+    /** Leaving (unmount, other page): ask OpenAI to close, give the message a moment to go out, then drop the connection. */
+    const abandon = () => {
+      if (send({ type: "session.close" })) timers.push(window.setTimeout(cleanup, 300));
+      else cleanup();
+    };
+    /** Closing the tab: there is no time to wait, but the close request can still go out. */
+    const onPageHide = () => send({ type: "session.close" });
+    window.addEventListener("pagehide", onPageHide);
+    teardown.current = abandon;
+    hangup.current = () => {
+      setState("closing");
+      if (send({ type: "session.close" })) {
+        // OpenAI answers with session.closed (and the final usage); don't wait forever for it.
+        timers.push(window.setTimeout(cleanup, CLOSE_TIMEOUT_MS));
+      } else if (requested) {
+        // Still connecting, but OpenAI may already have the session: finish connecting only to close it,
+        // rather than leave it open until it times out.
+        closeOnStart = true;
+        timers.push(window.setTimeout(cleanup, CLOSE_TIMEOUT_MS));
+      } else {
+        cleanup();
+      }
+    };
 
     try {
       const proof = await getProof();
@@ -95,22 +129,16 @@ export function useVoiceSession(handlers: VoiceHandlers) {
         if (!done) meters.current.out = tap(stream);
       };
       // The channel has to exist before the offer so it is negotiated with it.
-      const dc = pc.createDataChannel("oai-events");
-      const send = (event: object) => {
-        if (dc.readyState !== "open") return false;
-        dc.send(JSON.stringify(event));
-        return true;
-      };
-      hangup.current = () => {
-        setState("closing");
-        if (!send({ type: "session.close" })) return cleanup();
-        timers.push(window.setTimeout(cleanup, CLOSE_TIMEOUT_MS));
-      };
-      listen(dc, send, cleanup);
+      dc = pc.createDataChannel("oai-events");
+      listen(dc, send, cleanup, () => {
+        if (closeOnStart) send({ type: "session.close" });
+        else setState("live");
+      });
 
       await pc.setLocalDescription(await pc.createOffer());
       await iceGathered(pc);
-      if (done) return;
+      if (done || closeOnStart) return cleanup();
+      requested = true;
       const res = await fetch("/api/voice/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -119,6 +147,7 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       const body = (await res.json().catch(() => ({}))) as { sdp?: string; message?: string };
       if (!res.ok || !body.sdp) throw new Error(body.message ?? "Voice mode is unavailable right now.");
       if (done) return;
+      // Connected even if the user hung up meanwhile: session.started then sends the close.
       await pc.setRemoteDescription({ type: "answer", sdp: body.sdp });
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "failed" || pc.connectionState === "closed") cleanup();
@@ -126,14 +155,15 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       timers.push(window.setTimeout(() => hangup.current?.(), MAX_SESSION_MS));
     } catch (e) {
       const err = e as Error;
-      h.current.onError(
+      // Nothing to report when the user had already hung up.
+      if (!closeOnStart && !done) h.current.onError(
         err.name === "NotAllowedError" ? "Voice mode needs the microphone. Allow it in your browser and try again." : err.message,
       );
       cleanup();
     }
   }
 
-  function listen(dc: RTCDataChannel, send: (e: object) => boolean, cleanup: () => void) {
+  function listen(dc: RTCDataChannel, send: (e: object) => boolean, cleanup: () => void, onStarted: () => void) {
     // Speech arrives as transcript fragments; a turn ends when the other side starts speaking.
     let turn: { role: "user" | "assistant"; text: string } | null = null;
     const flush = () => {
@@ -155,7 +185,7 @@ export function useVoiceSession(handlers: VoiceHandlers) {
       }
       switch (event.type) {
         case "session.started":
-          setState("live");
+          onStarted();
           break;
         case "session.input_transcript.delta":
           hear("user", String(event.delta ?? ""));
@@ -187,6 +217,8 @@ export function useVoiceSession(handlers: VoiceHandlers) {
           flush();
           console.info("voice session closed:", event.reason, event.usage);
           if (event.reason === "expired") h.current.onError("The voice session reached its time limit.");
+          else if (event.reason === "connection_lost") h.current.onError("The voice connection dropped. Try again.");
+          else if (event.reason === "content") h.current.onError("The voice session was ended by a safety filter.");
           cleanup();
           break;
       }
