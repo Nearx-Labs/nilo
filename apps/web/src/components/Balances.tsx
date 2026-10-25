@@ -1,5 +1,6 @@
 import {
   type BalanceView,
+  type Explanation,
   type HorizonClaimableBalance,
   buildClaimTx,
   canAffordTrustline,
@@ -9,7 +10,7 @@ import {
   viewBalance,
 } from "@nilo/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { asSnapshot, config, friendbot, horizon, loadAccount } from "../stellar";
+import { asSnapshot, config, friendbot, horizon, loadAccount, requestSponsoredClaim } from "../stellar";
 import { formatLocal, formatRelative, short, useNow } from "../time";
 import { useWallet } from "../wallet";
 import { type Prepared, SignPanel } from "./SignPanel";
@@ -127,6 +128,22 @@ function BalanceRow(props: {
   const ready = v.claimableNow && (isRecipient || !v.deadline || now >= v.deadline + CLOCK_MARGIN);
 
   const prepare = useCallback(async (): Promise<Prepared> => {
+    const check = (e: Explanation) => {
+      if (e.kind !== "claim") return ["transaction type"];
+      const out: string[] = [];
+      if (e.fields.balanceId !== v.id) out.push("balance");
+      if (e.fields.claimant !== address) out.push("account");
+      return out;
+    };
+    // Recipients claim for free: Nilo's sponsor pays the fee and any trustline reserve.
+    // If the sponsor is unavailable, fall back to a claim the recipient pays for.
+    if (isRecipient && config.sponsor) {
+      try {
+        return { xdr: await requestSponsoredClaim(v.id, address), check };
+      } catch (e) {
+        console.warn("Sponsored claim unavailable, falling back to self-paid:", (e as Error).message);
+      }
+    }
     const account = await loadAccount(address);
     if (!account) throw new Error("Your account does not exist on testnet yet. Fund it (e.g. Friendbot) and try again.");
     const needsTrust = !hasTrustline(asSnapshot(account), { code: v.asset.code, issuer: v.asset.issuer });
@@ -137,17 +154,8 @@ function BalanceRow(props: {
       );
     }
     const xdr = buildClaimTx(v.id, account, config, needsTrust ? { code: v.asset.code, issuer: v.asset.issuer } : undefined);
-    return {
-      xdr,
-      check: (e) => {
-        if (e.kind !== "claim") return ["transaction type"];
-        const out: string[] = [];
-        if (e.fields.balanceId !== v.id) out.push("balance");
-        if (e.fields.source !== address) out.push("account");
-        return out;
-      },
-    };
-  }, [address, v.id, v.asset.code, v.asset.issuer]);
+    return { xdr, check };
+  }, [address, isRecipient, v.id, v.asset.code, v.asset.issuer]);
 
   return (
     <article className="card">

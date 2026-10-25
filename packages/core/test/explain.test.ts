@@ -1,7 +1,7 @@
 import { Account, Asset, Claimant, Memo, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { buildClaimTx, buildSendTx, explain, formatUtc, mismatches } from "../src";
-import { ALICE, ISSUER, MARIA, NOW, NOW_SEC, STRANGER, aliceAccount, config } from "./fixtures";
+import { buildClaimTx, buildSendTx, buildSponsoredClaimTx, explain, formatUtc, mismatches } from "../src";
+import { ALICE, ISSUER, MARIA, NOW, NOW_SEC, SPONSOR, STRANGER, aliceAccount, config } from "./fixtures";
 
 const TESTUSD = { code: "TESTUSD", issuer: ISSUER };
 const intent = { amount: "50", asset: TESTUSD, recipient: MARIA, recipientName: "maria", deadlineSeconds: 120 };
@@ -109,4 +109,83 @@ describe("explain: claim", () => {
       .toXDR();
     expect(explain(xdr, config).kind).toBe("unrecognized");
   });
+});
+
+describe("explain: sponsored claim", () => {
+  const balanceId = "00000000" + "ab".repeat(32);
+  const sponsor = () => new Account(SPONSOR, "7");
+
+  function sponsoredTx(ops: (b: TransactionBuilder) => TransactionBuilder, source = SPONSOR): string {
+    const b = new TransactionBuilder(new Account(source, "7"), {
+      fee: "100",
+      networkPassphrase: config.networkPassphrase,
+      timebounds: { minTime: 0, maxTime: NOW_SEC + 180 },
+    });
+    return ops(b).build().toXDR();
+  }
+  const begin = (id = MARIA) => Operation.beginSponsoringFutureReserves({ sponsoredId: id });
+  const trust = (limit?: string, source = MARIA) =>
+    Operation.changeTrust({ asset: new Asset("TESTUSD", ISSUER), limit, source });
+  const end = (source = MARIA) => Operation.endSponsoringFutureReserves({ source });
+  const claim = (source = MARIA) => Operation.claimClaimableBalance({ balanceId, source });
+
+  it("explains sponsored trustline + claim", () => {
+    const e = explain(buildSponsoredClaimTx(balanceId, sponsor(), MARIA, config, TESTUSD, NOW), config);
+    expect(e.kind).toBe("claim");
+    if (e.kind !== "claim") return;
+    expect(e.fields).toMatchObject({ source: SPONSOR, claimant: MARIA, sponsored: true, trustline: TESTUSD, balanceId });
+    const text = e.lines.join("\n");
+    expect(text).toContain(`into your account ${MARIA}`);
+    expect(text).toContain("pays the network fee and the 0.5 XLM trustline reserve");
+  });
+
+  it("explains a sponsored claim without trustline", () => {
+    const e = explain(buildSponsoredClaimTx(balanceId, sponsor(), MARIA, config, undefined, NOW), config);
+    expect(e.kind).toBe("claim");
+    if (e.kind !== "claim") return;
+    expect(e.fields).toMatchObject({ claimant: MARIA, sponsored: true, trustline: undefined });
+    expect(e.lines.join("\n")).toContain("pays the network fee.");
+  });
+
+  it("marks a self-paid claim as not sponsored", () => {
+    const e = explain(buildClaimTx(balanceId, new Account(MARIA, "1"), config, TESTUSD, NOW), config);
+    expect(e.kind === "claim" && e.fields).toMatchObject({ claimant: MARIA, sponsored: false });
+  });
+
+  const tampered: Record<string, string> = {
+    "unknown sponsor": sponsoredTx((b) => b.addOperation(begin()).addOperation(trust()).addOperation(end()).addOperation(claim()), STRANGER),
+    "sponsors a different account": sponsoredTx((b) =>
+      b.addOperation(begin(STRANGER)).addOperation(trust()).addOperation(end()).addOperation(claim()),
+    ),
+    "trustline on a different account": sponsoredTx((b) =>
+      b.addOperation(begin()).addOperation(trust(undefined, STRANGER)).addOperation(end()).addOperation(claim()),
+    ),
+    "extra payment from the claimant": sponsoredTx((b) =>
+      b
+        .addOperation(begin())
+        .addOperation(trust())
+        .addOperation(end())
+        .addOperation(Operation.payment({ destination: SPONSOR, asset: Asset.native(), amount: "1", source: MARIA }))
+        .addOperation(claim()),
+    ),
+    "end before changeTrust": sponsoredTx((b) => b.addOperation(begin()).addOperation(end()).addOperation(trust()).addOperation(claim())),
+    "trustline limit 0": sponsoredTx((b) => b.addOperation(begin()).addOperation(trust("0")).addOperation(end()).addOperation(claim())),
+    "sponsor claims for itself": sponsoredTx((b) => b.addOperation(Operation.claimClaimableBalance({ balanceId }))),
+    "send from the sponsor": sponsoredTx((b) =>
+      b.addOperation(
+        Operation.createClaimableBalance({
+          asset: new Asset("TESTUSD", ISSUER),
+          amount: "50",
+          claimants: [new Claimant(MARIA, before(deadline)), new Claimant(SPONSOR, after(deadline))],
+        }),
+      ),
+    ),
+  };
+  for (const [name, xdr] of Object.entries(tampered)) {
+    it(`rejects: ${name}`, () => {
+      const e = explain(xdr, config);
+      expect(e.kind).toBe("unrecognized");
+      expect(e.lines.join("\n")).toContain("Do not sign");
+    });
+  }
 });

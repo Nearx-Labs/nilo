@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "setup:testnet": "tsx scripts/setup-testnet.ts",
+    "setup:sponsor": "tsx scripts/setup-sponsor.ts",
     "test": "npm test -w packages/core",
     "dev:server": "npm run dev -w apps/server",
     "dev:web": "npm run dev -w apps/web",

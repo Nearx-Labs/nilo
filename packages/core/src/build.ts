@@ -56,3 +56,28 @@ export function buildClaimTx(
   builder.addOperation(Operation.claimClaimableBalance({ balanceId }));
   return builder.build().toXDR();
 }
+
+/**
+ * Claim paid for by the app's sponsor account: the sponsor is the transaction
+ * source (so it pays the fee) and, when `addTrustline` is given, also sponsors
+ * the trustline reserve. The claimant only signs; its XLM balance is untouched.
+ */
+export function buildSponsoredClaimTx(
+  balanceId: string,
+  sponsor: TransactionSource,
+  claimant: string,
+  config: AppConfig,
+  addTrustline?: AssetSpec,
+  now: Date = new Date(),
+): string {
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const builder = txBuilder(sponsor, config, nowSec);
+  if (addTrustline) {
+    builder
+      .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: claimant }))
+      .addOperation(Operation.changeTrust({ asset: toSdkAsset(addTrustline), source: claimant }))
+      .addOperation(Operation.endSponsoringFutureReserves({ source: claimant }));
+  }
+  builder.addOperation(Operation.claimClaimableBalance({ balanceId, source: claimant }));
+  return builder.build().toXDR();
+}

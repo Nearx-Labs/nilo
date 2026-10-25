@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import OpenAI from "openai";
 import { Hono } from "hono";
 import { ChatSchema, extractIntent } from "./extract";
+import { SponsorError, SponsorRequest, sponsorClaim } from "./sponsor";
 
 const app = new Hono();
 
@@ -20,6 +21,18 @@ app.post("/api/extract", async (c) => {
           ? "The assistant is rate limited. Try again in a moment."
           : "The assistant is unavailable right now.";
     return c.json({ status: "error", message }, 502);
+  }
+});
+
+app.post("/api/sponsor-claim", async (c) => {
+  const parsed = SponsorRequest.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ message: "Invalid balance ID or address." }, 400);
+  try {
+    return c.json(await sponsorClaim(parsed.data));
+  } catch (e) {
+    if (e instanceof SponsorError) return c.json({ message: e.message }, e.status);
+    console.error("sponsor-claim failed:", e);
+    return c.json({ message: "Could not prepare a sponsored claim right now." }, 502);
   }
 });
 

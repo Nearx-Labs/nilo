@@ -14,6 +14,8 @@ export interface AppConfig {
   assets: AssetSpec[];
   /** Fixed nickname → public key list for the demo. Lowercase keys. */
   contacts: Record<string, string>;
+  /** Public key of the app's sponsor account, which may pay claim fees and trustline reserves. */
+  sponsor?: string;
 }
 
 export const defaultConfig: AppConfig = demo;

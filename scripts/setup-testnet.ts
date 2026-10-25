@@ -64,3 +64,6 @@ writeFileSync(
 );
 console.log("Done.", demo.contacts, "issuer:", issuer.publicKey());
 console.log("Secrets written to .env.demo — import ALICE and MARIA into Freighter (testnet).");
+
+// The sponsor account (claim fees + trustline reserves) is created by its own script.
+await import("./setup-sponsor.ts");

@@ -7,12 +7,14 @@ export const ISSUER = kp(1);
 export const ALICE = kp(2);
 export const MARIA = kp(3);
 export const STRANGER = kp(4);
+export const SPONSOR = kp(5);
 
 export const config: AppConfig = {
   networkPassphrase: Networks.TESTNET,
   horizonUrl: "https://horizon-testnet.stellar.org",
   assets: [{ code: "XLM" }, { code: "TESTUSD", issuer: ISSUER }],
   contacts: { alice: ALICE, maria: MARIA },
+  sponsor: SPONSOR,
 };
 
 export const NOW = new Date("2026-10-25T12:00:00Z");

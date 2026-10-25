@@ -21,6 +21,21 @@ export async function friendbot(address: string) {
   if (!res.ok) throw new Error(`Friendbot could not fund ${address} (${res.status}).`);
 }
 
+/**
+ * Asks the server for a claim the app's sponsor pays for (fee, and the trustline
+ * reserve if needed), already signed by the sponsor. Throws with the server's reason.
+ */
+export async function requestSponsoredClaim(balanceId: string, claimant: string): Promise<string> {
+  const res = await fetch("/api/sponsor-claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ balanceId, claimant }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || typeof body.xdr !== "string") throw new Error(body.message ?? `Sponsor unavailable (${res.status}).`);
+  return body.xdr;
+}
+
 export const asSnapshot = (a: Horizon.AccountResponse) => a as unknown as AccountSnapshot;
 
 export const explorerTx = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;

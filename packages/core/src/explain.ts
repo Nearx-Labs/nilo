@@ -29,7 +29,12 @@ export interface SendFields {
 }
 
 export interface ClaimFields {
+  /** Transaction source: pays the fee. The claimant itself, or the app's sponsor. */
   source: string;
+  /** Account that receives the balance. */
+  claimant: string;
+  /** Set when the app's sponsor pays the fee (and the trustline reserve, if any). */
+  sponsored: boolean;
   balanceId: string;
   trustline?: AssetSpec;
   fee: string;
@@ -70,7 +75,10 @@ export function explain(xdrBase64: string, config: AppConfig): Explanation {
   }
   if (tx instanceof FeeBumpTransaction) return unrecognized("it is a fee-bump transaction.");
   if (tx.memo.type !== "none") return unrecognized("it carries a memo.");
-  if (tx.operations.some((op) => op.source && op.source !== tx.source)) {
+  const sponsored = !!config.sponsor && tx.source === config.sponsor;
+  // Only a sponsored claim may have operations acting for another account; its
+  // shape is checked operation by operation below.
+  if (!sponsored && tx.operations.some((op) => op.source && op.source !== tx.source)) {
     return unrecognized("an operation acts on behalf of a different account.");
   }
 
@@ -83,7 +91,7 @@ export function explain(xdrBase64: string, config: AppConfig): Explanation {
   ];
   const ops = tx.operations;
 
-  if (ops.length === 1 && ops[0].type === "createClaimableBalance") {
+  if (!sponsored && ops.length === 1 && ops[0].type === "createClaimableBalance") {
     const op = ops[0];
     if (op.claimants.length !== 2) return unrecognized(`it has ${op.claimants.length} claimants instead of 2.`);
     const recipientC = op.claimants.find((c) => beforeAbsolute(c.predicate) !== null);
@@ -129,6 +137,43 @@ export function explain(xdrBase64: string, config: AppConfig): Explanation {
   }
 
   const claimOp = ops[ops.length - 1];
+  if (sponsored) {
+    if (claimOp.type !== "claimClaimableBalance" || !claimOp.source || claimOp.source === tx.source) {
+      return unrecognized("the sponsor account is the source but this is not a claim by someone else.");
+    }
+    const claimant = claimOp.source;
+    let trustline: AssetSpec | undefined;
+    if (ops.length === 4) {
+      const [begin, trust, end] = ops;
+      if (begin.type !== "beginSponsoringFutureReserves" || trust.type !== "changeTrust" || end.type !== "endSponsoringFutureReserves") {
+        return unrecognized(`unexpected sponsored operations: ${ops.map((o) => o.type).join(", ")}.`);
+      }
+      if (begin.source && begin.source !== tx.source) return unrecognized("the reserve sponsor is not the paying account.");
+      if (begin.sponsoredId !== claimant) return unrecognized("the sponsored account is not the one claiming.");
+      if (trust.source !== claimant || end.source !== claimant) {
+        return unrecognized("the trustline is not added to the account claiming.");
+      }
+      if (!("getCode" in trust.line)) return unrecognized("the trustline is for a liquidity pool share.");
+      if (trust.limit !== MAX_TRUST_LIMIT) return unrecognized(`the trustline sets a limit of ${trust.limit}.`);
+      trustline = spec(trust.line as Asset);
+    } else if (ops.length !== 1) {
+      return unrecognized(`unexpected sponsored operations: ${ops.map((o) => o.type).join(", ")}.`);
+    }
+    const fields: ClaimFields = { source: tx.source, claimant, sponsored: true, balanceId: claimOp.balanceId, trustline, fee, validUntil };
+    return {
+      kind: "claim",
+      fields,
+      lines: [
+        ...(trustline ? [`Adds a trustline so your account can hold ${assetLabel(trustline)}.`] : []),
+        `Claims the pending balance ${claimOp.balanceId} into your account ${claimant}.`,
+        trustline
+          ? `Nilo's sponsor account ${tx.source} pays the network fee and the 0.5 XLM trustline reserve. Your XLM balance does not change.`
+          : `Nilo's sponsor account ${tx.source} pays the network fee. Your XLM balance does not change.`,
+        ...footer,
+      ],
+    };
+  }
+
   if ((ops.length === 1 || ops.length === 2) && claimOp.type === "claimClaimableBalance") {
     let trustline: AssetSpec | undefined;
     if (ops.length === 2) {
@@ -138,7 +183,7 @@ export function explain(xdrBase64: string, config: AppConfig): Explanation {
       if (first.limit !== MAX_TRUST_LIMIT) return unrecognized(`the trustline sets a limit of ${first.limit}.`);
       trustline = spec(first.line as Asset);
     }
-    const fields: ClaimFields = { source: tx.source, balanceId: claimOp.balanceId, trustline, fee, validUntil };
+    const fields: ClaimFields = { source: tx.source, claimant: tx.source, sponsored: false, balanceId: claimOp.balanceId, trustline, fee, validUntil };
     return {
       kind: "claim",
       fields,
