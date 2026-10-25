@@ -251,6 +251,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .success { color: var(--ok); margin: 0; }
 .panel.success { background: var(--ok-bg); border-color: var(--ok-border); }
 .panel.success p { margin: 0; }
+.panel.conversion { gap: 8px; }
+.panel.conversion p { margin: 0; line-height: 1.5; }
 .card > button { align-self: flex-start; }
 
 /* ---------- Page head extras ---------- */
