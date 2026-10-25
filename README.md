@@ -9,6 +9,8 @@ itself, not written by the AI.
 
 > HackMeridian 2026 · Stellar Unlocked track · **testnet only**
 
+![Nilo home: chat with quick actions for sending, checking the balance, claiming and recovering](docs/screenshots/home.png)
+
 ## Contents
 
 - [The problem](#the-problem)
@@ -83,6 +85,10 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 | The explanation matches the transaction | It is generated from the final XDR by fixed templates, then compared field by field with the validated intent. A mismatch blocks signing. |
 | Nilo never holds funds or keys | Signing happens in the user's wallet: Freighter or Albedo, or a Pollar email/Google wallet. The app only knows public addresses. |
 
+This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every line comes from the transaction bytes:
+
+![The explanation card decoded from the XDR, with the Sign and send button](docs/screenshots/review.png)
+
 ## Quick start
 
 **You need:** Node.js 20+, a [Pollar](https://pollar.xyz) testnet app and an OpenAI API key.
@@ -98,7 +104,7 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 
    | Variable | Where it comes from |
    |---|---|
-   | `OPENAI_API_KEY` | OpenAI. Used only by the chat endpoint; the **Form** tab works without it. |
+   | `OPENAI_API_KEY` | OpenAI. Used only by the chat endpoint; the form (the **+** button next to the chat box) works without it. |
    | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. |
    | `VITE_POLLAR_API_KEY` | Pollar dashboard → Build → API Keys → **publishable** key (`pub_testnet_…`). Never use a secret key here: `VITE_*` values are shipped to the browser. |
 
@@ -124,7 +130,7 @@ The demo uses the nicknames `alice` (sender), `maria` (recipient) and `bob`, all
 
 | Step | What to do | What you should see |
 |---|---|---|
-| 1. Send | On **Send**, type "send 50 TESTUSD to maria, she has 2 minutes". | An explanation card naming Maria's address and the deadline. |
+| 1. Send | On **Chat**, type "send 50 TESTUSD to maria, she has 2 minutes" (or click **Send a payment** to fill it in). | An explanation card naming Maria's address and the deadline. |
 | 2. Sign | Sign with your wallet. | The payment shows up as pending on **Sent**. |
 | 3. Claim | As the recipient, open **Claim** before the deadline. | The balance is claimed, with the trustline added if needed. |
 | 4. Recover | Send to an address nobody controls, wait for the deadline, open **Sent**. | A **Recover** action that returns the funds to you. |
@@ -136,13 +142,20 @@ Helper scripts:
 | `npx tsx scripts/smoke-testnet.ts` | End-to-end check against testnet without a wallet: send → claim with trustline, then send to a stranger → wait → recover. Needs `.env.demo`. |
 | `npm run demo:reset-maria` | Resets the recipient account between takes. |
 
+<details>
+<summary>On a phone</summary>
+
+<img src="docs/screenshots/mobile.png" alt="Nilo home on a phone" width="320">
+
+</details>
+
 ## Repository layout
 
 | Path | What it does |
 |---|---|
 | [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation. All the tests live here. |
 | [`apps/server`](apps/server) | One endpoint, `POST /api/extract`: chat messages in, structured intent (or a clarifying question) out. |
-| [`apps/web`](apps/web) | Vite + React. **Send** (chat or form), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. |
+| [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
 | [`scripts/`](scripts) | Testnet setup, the wallet-free smoke test, and the demo reset. |
 
 ## Limits of v1
