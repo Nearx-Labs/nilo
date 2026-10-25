@@ -306,6 +306,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .panel.success p { margin: 0; }
 .panel.success a { color: #7fb0f7; }
 .card > button, .panel > button { align-self: flex-start; }
+.panel.conversion { gap: 8px; }
+.panel.conversion p { margin: 0; line-height: 1.5; }
 
 /* ---------- Connected chip ---------- */
 .connected {

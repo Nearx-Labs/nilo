@@ -1,8 +1,18 @@
 import {
+  FIAT_SIGNS,
+  type PriceQuery,
   type ResolvedIntent,
   type SendIntent,
+  assetToFiat,
   buildSendTx,
+  crossRate,
+  fiatToAsset,
+  formatFiat,
+  formatRate,
+  formatUtc,
+  isFiat,
   mismatches,
+  priceSymbol,
   validateIntent,
 } from "@nilo/core";
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -23,12 +33,14 @@ import {
 } from "../components/icons";
 import { type ChatActionState, MoreMenu, PageTop, QUICK_ACTIONS, TRUST_URL, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
+import { getQuote, shortContract } from "../prices";
 import { asSnapshot, config, loadAccount } from "../stellar";
 import { formatLocal } from "../time";
 import { useWallet } from "../wallet";
 
 type ExtractResponse =
   | { status: "complete"; intent: SendIntent }
+  | { status: "price"; query: PriceQuery }
   | { status: "needs_clarification"; question: string }
   | { status: "error"; message: string };
 
@@ -61,6 +73,60 @@ function forExtract(messages: ChatMessage[]): ChatMessage[] {
   return start < 0 ? [] : turns.slice(start);
 }
 
+/** Drafts the quick actions put in the composer. */
+const DRAFTS = {
+  example: EXAMPLE,
+  price: "How much is XLM in BRL?",
+  fiat: "Send R$ 5 in XLM to maria, she has 2 minutes",
+};
+/** Currency the "≈" values are shown in. */
+const DISPLAY_FIAT = "USD";
+
+/** How a money amount became an asset amount. Shown on review; not part of the transaction. */
+interface Conversion {
+  fiatAmount: string;
+  currency: string;
+  /** Price of one unit of the asset in `currency`, scaled by PRICE_SCALE. */
+  rate: bigint;
+  /** Oldest of the oracle records used, unix seconds. */
+  timestamp: number;
+  oracles: string[];
+  /** Set when a test asset is priced as a real one. */
+  pricedAs?: string;
+}
+
+/** Turns "R$ 50 in XLM" into "<n> XLM" with oracle prices. The model never does this math. */
+async function convertFiat(intent: SendIntent): Promise<{ intent: SendIntent; conversion: Conversion }> {
+  const currency = intent.fiatCurrency!.trim().toUpperCase();
+  if (!isFiat(config, currency)) {
+    throw new Error(`Payments can be written in ${config.prices!.fiat.join(", ")}, not ${currency}.`);
+  }
+  const symbol = priceSymbol(config, intent.asset);
+  const [fiat, asset] = await Promise.all([getQuote(currency), getQuote(symbol)]);
+  const amount = fiatToAsset(intent.amount, fiat, asset);
+  return {
+    intent: { ...intent, amount, fiatCurrency: undefined },
+    conversion: {
+      fiatAmount: intent.amount.trim(),
+      currency,
+      rate: crossRate(asset, fiat),
+      timestamp: Math.min(fiat.timestamp, asset.timestamp),
+      oracles: [...new Set([fiat.oracle, asset.oracle].filter(Boolean))],
+      pricedAs: symbol !== intent.asset.trim().toUpperCase() ? symbol : undefined,
+    },
+  };
+}
+
+/** "≈ US$ 12.34", or null when there is no price for the asset (never blocks a payment). */
+async function approxValue(amount: string, assetCode: string): Promise<string | null> {
+  try {
+    const [asset, fiat] = await Promise.all([getQuote(priceSymbol(config, assetCode)), getQuote(DISPLAY_FIAT)]);
+    return `≈ ${formatFiat(assetToFiat(amount, asset, fiat), DISPLAY_FIAT)}`;
+  } catch {
+    return null;
+  }
+}
+
 async function validateFresh(intent: SendIntent, address: string): Promise<ResolvedIntent> {
   const account = await loadAccount(address);
   if (!account) throw new Error("Your account is not on testnet yet. If you just signed in, wait a few seconds; otherwise fund it with Friendbot (Claim page).");
@@ -79,9 +145,13 @@ export function ChatPage({ bot }: { bot: Bot }) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"chat" | "form">("chat");
-  const [pending, setPending] = useState<{ intent: SendIntent; resolved: ResolvedIntent; warning?: string } | null>(
-    null,
-  );
+  const [pending, setPending] = useState<{
+    intent: SendIntent;
+    resolved: ResolvedIntent;
+    warning?: string;
+    conversion?: Conversion;
+    approx?: string | null;
+  } | null>(null);
   const [sent, setSent] = useState<{ deadline: number; balanceId: string } | null>(null);
   const fresh = messages.length === 0 && !pending;
   // The welcome screen reads from the top; only a conversation (or the form) follows the bottom.
@@ -110,12 +180,12 @@ export function ChatPage({ bot }: { bot: Bot }) {
     const state = location.state as ChatActionState | null;
     if (!state?.action) return;
     navigate(location.pathname, { replace: true, state: null });
-    if (state.action === "example") {
-      setMode("chat");
-      setDraft(EXAMPLE);
-      setTimeout(() => input.current?.focus());
-    } else {
+    if (state.action === "balance") {
       checkBalance();
+    } else {
+      setMode("chat");
+      setDraft(DRAFTS[state.action]);
+      setTimeout(() => input.current?.focus());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
@@ -166,10 +236,18 @@ export function ChatPage({ bot }: { bot: Bot }) {
         say("Your account is not on testnet yet. Fund it with Friendbot on the Claim page.");
         return;
       }
-      const lines = account.balances.map((b) =>
-        b.asset_type === "native" ? `${b.balance} XLM` : `${b.balance} ${"asset_code" in b ? b.asset_code : "pool share"}`,
+      const lines = await Promise.all(
+        account.balances.map(async (b) => {
+          const code = b.asset_type === "native" ? "XLM" : "asset_code" in b ? b.asset_code : null;
+          if (!code) return `${b.balance} pool share`;
+          const approx = await approxValue(b.balance, code);
+          return `${b.balance} ${code}${approx ? ` (${approx})` : ""}`;
+        }),
       );
-      say(`Your available funds:\n${lines.map((l) => `• ${l}`).join("\n")}`);
+      say(
+        `Your available funds:\n${lines.map((l) => `• ${l}`).join("\n")}` +
+          (lines.some((l) => l.includes("≈")) ? "\n\nValues from the Reflector oracle on testnet." : ""),
+      );
     } catch (e) {
       say(`I couldn't load your balance: ${(e as Error).message}`);
     }
@@ -187,13 +265,24 @@ export function ChatPage({ bot }: { bot: Bot }) {
       return;
     }
     try {
+      let conversion: Conversion | undefined;
+      if (intent.fiatCurrency) {
+        ({ intent, conversion } = await convertFiat(intent));
+        say(
+          `${formatFiat(conversion.fiatAmount, conversion.currency)} is ${intent.amount} ${intent.asset.toUpperCase()} ` +
+            `at ${formatRate(conversion.rate)} ${conversion.currency} per ${intent.asset.toUpperCase()} (Reflector oracle).`,
+        );
+      }
       const resolved = await validateFresh(intent, from);
-      const exists = await loadAccount(resolved.recipient);
+      const [exists, approx] = await Promise.all([
+        loadAccount(resolved.recipient),
+        conversion ? null : approxValue(resolved.amount, resolved.asset.code),
+      ]);
       const warning = exists
         ? undefined
         : "This address does not exist on testnet. Nobody may be able to claim it; you can recover the funds after the deadline.";
       setSent(null);
-      setPending({ intent, resolved, warning });
+      setPending({ intent, resolved, warning, conversion, approx });
     } catch (e) {
       say(`I can't prepare that: ${(e as Error).message}`);
     }
@@ -220,11 +309,14 @@ export function ChatPage({ bot }: { bot: Bot }) {
       });
       const data = (await res.json()) as ExtractResponse;
       if (data.status === "complete") {
+        const { amount, asset, fiatCurrency, recipient, deadlineSeconds } = data.intent;
         say(
-          `Got it: ${data.intent.amount} ${data.intent.asset} to ${data.intent.recipient}, ` +
-            `claimable for ${data.intent.deadlineSeconds} seconds. ${CHECKING}`,
+          `Got it: ${fiatCurrency ? `${fiatCurrency} ${amount} in ${asset}` : `${amount} ${asset}`} to ${recipient}, ` +
+            `claimable for ${deadlineSeconds} seconds. ${CHECKING}`,
         );
         await startReview(data.intent);
+      } else if (data.status === "price") {
+        await answerPrice(data.query);
       } else if (data.status === "needs_clarification") {
         say(data.question);
       } else {
@@ -234,6 +326,26 @@ export function ChatPage({ bot }: { bot: Bot }) {
       if (!ctrl.signal.aborted) say("I couldn't reach the assistant. You can use the form instead.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** The answer comes from the oracle, never from the model. */
+  async function answerPrice(query: PriceQuery) {
+    const base = query.asset.trim().toUpperCase();
+    const quote = query.quoteCurrency.trim().toUpperCase();
+    try {
+      const baseSymbol = priceSymbol(config, base);
+      const [b, q] = await Promise.all([getQuote(baseSymbol), getQuote(quote)]);
+      const sign = FIAT_SIGNS[quote];
+      const value = formatRate(crossRate(b, q));
+      const oracles = [...new Set([b.oracle, q.oracle].filter(Boolean))].map(shortContract).join(" + ");
+      say(
+        `1 ${base} = ${sign ? `${sign} ${value}` : `${value} ${quote}`}` +
+          (baseSymbol !== base ? ` (priced as ${baseSymbol}; ${base} is a test asset)` : "") +
+          `\nReflector oracle ${oracles} on testnet, updated ${formatUtc(Math.min(b.timestamp, q.timestamp))}.`,
+      );
+    } catch (e) {
+      say(`I couldn't get that price: ${(e as Error).message}`);
     }
   }
 
@@ -396,6 +508,15 @@ export function ChatPage({ bot }: { bot: Bot }) {
                 the transaction itself, not written by the AI.
               </p>
               {pending.warning && <p className="warning">{pending.warning}</p>}
+              {pending.conversion ? (
+                <ConversionNote conversion={pending.conversion} resolved={pending.resolved} />
+              ) : (
+                pending.approx && (
+                  <p className="muted small">
+                    {pending.resolved.amount} {pending.resolved.asset.code} is {pending.approx} (Reflector oracle, testnet).
+                  </p>
+                )
+              )}
               <SignPanel
                 key={JSON.stringify(pending.intent)}
                 prepare={prepare}
@@ -478,6 +599,25 @@ export function ChatPage({ bot }: { bot: Bot }) {
           )}
         </form>
       </div>
+    </div>
+  );
+}
+
+/** Where the asset amount came from. Kept apart from the decoded explanation: the transaction holds no price. */
+function ConversionNote({ conversion: c, resolved }: { conversion: Conversion; resolved: ResolvedIntent }) {
+  return (
+    <div className="panel conversion">
+      <strong>
+        {formatFiat(c.fiatAmount, c.currency)} → {resolved.amount} {resolved.asset.code}
+      </strong>
+      <p className="small">
+        Rate: 1 {resolved.asset.code} = {formatRate(c.rate)} {c.currency}
+        {c.pricedAs && ` (priced as ${c.pricedAs})`}, from the Reflector oracle {c.oracles.map(shortContract).join(" + ")}{" "}
+        on testnet, updated {formatUtc(c.timestamp)}. Rounded down to 7 decimals.
+      </p>
+      <p className="muted small">
+        The conversion is not part of the transaction: what you sign is the {resolved.asset.code} amount explained below.
+      </p>
     </div>
   );
 }

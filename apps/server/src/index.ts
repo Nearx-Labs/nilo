@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
+import { serveStatic } from "@hono/node-server/serve-static";
 import OpenAI from "openai";
 import { Hono } from "hono";
 import { ChatSchema, extractIntent } from "./extract";
@@ -64,6 +65,14 @@ app.post("/api/faucet", async (c) => {
     return c.json({ message: "Could not reach the test USDC faucet right now." }, 502);
   }
 });
+
+// In the Docker image the server also serves the built web app (STATIC_DIR, relative to the working directory).
+// Unknown paths fall back to index.html so BrowserRouter routes survive a reload.
+const staticDir = process.env.STATIC_DIR;
+if (staticDir) {
+  app.use("/*", serveStatic({ root: staticDir }));
+  app.get("*", (c, next) => (c.req.path.startsWith("/api/") ? next() : serveStatic({ path: `${staticDir}/index.html` })(c, next)));
+}
 
 if (!process.env.OPENAI_API_KEY) {
   console.warn("No OPENAI_API_KEY set (see .env.example): /api/extract will fail until it is.");

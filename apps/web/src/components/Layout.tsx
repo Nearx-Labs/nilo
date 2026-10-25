@@ -16,10 +16,21 @@ import { CreateBotModal } from "../bots/CreateBotModal";
 import { DEFAULT_BOT, DEFAULT_PREVIEW, useBots } from "../bots/store";
 import { StroopyAvatar } from "../bots/StroopyAvatar";
 import { useAutoTrustline, useWallet } from "../wallet";
-import { HistoryIcon, InboxIcon, MenuIcon, PlusIcon, SearchIcon, SendIcon, UserIcon, WalletIcon } from "./icons";
+import {
+  ChartIcon,
+  CoinsIcon,
+  HistoryIcon,
+  InboxIcon,
+  MenuIcon,
+  PlusIcon,
+  SearchIcon,
+  SendIcon,
+  UserIcon,
+  WalletIcon,
+} from "./icons";
 
 /** Chat actions the chat page runs when it is opened with this router state. */
-export type ChatAction = "example" | "balance";
+export type ChatAction = "example" | "balance" | "price" | "fiat";
 export interface ChatActionState {
   action: ChatAction;
   /** Makes a repeated click a new navigation. */
@@ -41,6 +52,8 @@ export const QUICK_ACTIONS: QuickAction[] = [
   { title: "Check balance", hint: "View your available funds", Icon: WalletIcon, tone: "blue", action: "balance" },
   { title: "Claim a payment", hint: "See what's waiting for you", Icon: InboxIcon, tone: "green", to: "/claim" },
   { title: "Sent payments", hint: "Track or recover what you sent", Icon: HistoryIcon, tone: "purple", to: "/sent" },
+  { title: "Check a price", hint: "Live on-chain rates from Reflector", Icon: ChartIcon, tone: "blue", action: "price" },
+  { title: "Send in reais", hint: "Pay R$ worth of XLM", Icon: CoinsIcon, tone: "violet", action: "fiat" },
 ];
 
 export function useQuickAction(chatPath = `/chat/${DEFAULT_BOT.id}`) {

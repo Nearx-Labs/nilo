@@ -41,6 +41,21 @@ export const InboxIcon = (p: P) => (
     <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
   </Icon>
 );
+export const ChartIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M3 3v18h18" />
+    <path d="m7 15 4-4 3 3 6-6" />
+    <path d="M16 8h4v4" />
+  </Icon>
+);
+export const CoinsIcon = (p: P) => (
+  <Icon {...p}>
+    <circle cx="9" cy="9" r="6" />
+    <path d="M18.1 10.4A6 6 0 1 1 10.4 18.1" />
+    <path d="M9 6v6" />
+    <path d="M7 8h3a1 1 0 0 1 0 2H8a1 1 0 0 0 0 2h3" />
+  </Icon>
+);
 export const HistoryIcon = (p: P) => (
   <Icon {...p}>
     <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />

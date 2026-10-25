@@ -16,9 +16,33 @@ export interface AppConfig {
   contacts: Record<string, string>;
   /** Public key of the app's sponsor account, which may pay claim fees and trustline reserves. */
   sponsor?: string;
+  /** Reflector price oracles (read-only, via Stellar RPC simulation). */
+  prices?: PriceConfig;
 }
 
-export const defaultConfig: AppConfig = demo;
+export interface PriceConfig {
+  rpcUrl: string;
+  /** Reflector Pulse oracle for crypto prices in USD (CEX/DEX aggregate). */
+  cryptoOracle: string;
+  /** Reflector Pulse oracle for fiat exchange rates in USD. */
+  forexOracle: string;
+  /** Asset code → oracle symbol, for assets priced as another (e.g. a test stablecoin as USDC). */
+  symbols: Record<string, string>;
+  /** Fiat currencies a payment can be written in. */
+  fiat: string[];
+}
+
+/** Reflector Pulse oracles on testnet: free to read, 14 decimals, a new record every 300 s. */
+export const TESTNET_PRICES: PriceConfig = {
+  rpcUrl: "https://soroban-testnet.stellar.org",
+  cryptoOracle: "CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63",
+  forexOracle: "CCSSOHTBL3LEWUCBBEB5NJFC2OKFRC74OWEIJIZLRJBGAAU4VMU5NV4W",
+  // The demo's assets (XLM, Circle's USDC) are quoted as they are; a self-issued test asset would map here.
+  symbols: {},
+  fiat: ["USD", "BRL", "EUR"],
+};
+
+export const defaultConfig: AppConfig = { ...demo, prices: TESTNET_PRICES };
 
 export const STROOPS_PER_UNIT = 10_000_000n;
 /** Base reserve on the Stellar network, in stroops (0.5 XLM). */
