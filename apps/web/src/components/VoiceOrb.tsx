@@ -9,9 +9,9 @@ const HOLD_MS = 400;
 const TICKS = 120;
 
 const COLORS = {
-  idle: [120, 140, 165],
-  listening: [56, 189, 255],
-  speaking: [255, 178, 72],
+  idle: [120, 138, 160],
+  listening: [104, 182, 236],
+  speaking: [236, 184, 120],
 } as const;
 
 type Rgb = readonly [number, number, number];
@@ -79,8 +79,9 @@ export function VoiceOrb({
       const size = el.getBoundingClientRect().width;
       c = size / 2;
       const H = size / 2;
-      const t = still ? 0 : now / 1000;
-      const spin = state === "live" ? 1 : 2.2;
+      // Unhurried: everything turns at a little over half the speed it was designed at.
+      const t = still ? 0 : (now / 1000) * 0.6;
+      const spin = state === "live" ? 1 : 2;
 
       const { mic, out } = state === "live" ? levels() : { mic: 0, out: 0 };
       if (out > SPEAKING && out > mic) speakingUntil = now + HOLD_MS;
@@ -106,7 +107,7 @@ export function VoiceOrb({
 
       // Back glow.
       const glow = ctx.createRadialGradient(c, c, H * 0.3, c, c, H * 0.95);
-      glow.addColorStop(0, rgba(color, 0.22 + 0.25 * level));
+      glow.addColorStop(0, rgba(color, 0.12 + 0.14 * level));
       glow.addColorStop(1, rgba(color, 0));
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, size, size);
@@ -114,35 +115,35 @@ export function VoiceOrb({
       // 1. Outer rotor: three long segments, slow.
       for (let k = 0; k < 3; k++) {
         const a = t * 0.12 * spin + (k * TAU) / 3;
-        arc(H * 0.96, a, a + TAU / 3 - 0.35, 1.5, rgba(color, 0.55));
+        arc(H * 0.96, a, a + TAU / 3 - 0.35, 1.2, rgba(color, 0.32));
       }
-      arc(H * 0.9, 0, TAU, 1, rgba(color, 0.18));
+      arc(H * 0.9, 0, TAU, 1, rgba(color, 0.1));
 
       // 2. Technical rotor: bracket segments and a dashed track, the other way.
       const b = -t * 0.22 * spin;
       for (let k = 0; k < 6; k++) {
         const a = b + (k * TAU) / 6;
-        arc(H * 0.82, a, a + 0.42, 4, rgba(color, 0.7));
+        arc(H * 0.82, a, a + 0.42, 2.5, rgba(color, 0.4));
       }
-      ctx.setLineDash([1.5, 5]);
-      arc(H * 0.82, 0, TAU, 1, rgba(color, 0.35));
+      ctx.setLineDash([1.5, 6]);
+      arc(H * 0.82, 0, TAU, 1, rgba(color, 0.2));
       ctx.setLineDash([]);
 
       // 3. Thick arc that swells with the voice.
-      const thick = H * (0.045 + 0.04 * level);
-      arc(H * 0.7, 0, TAU, thick, rgba(color, 0.1));
+      const thick = H * (0.03 + 0.03 * level);
+      arc(H * 0.7, 0, TAU, thick, rgba(color, 0.05));
       const a3 = t * 0.38 * spin;
       let stroke: string | CanvasGradient = rgba(color, 0.9);
       if ("createConicGradient" in ctx) {
         const g = ctx.createConicGradient(a3, c, c);
-        g.addColorStop(0, rgba(color, 0.15));
-        g.addColorStop(0.72, rgba(color, 0.95 + 0.05 * level));
+        g.addColorStop(0, rgba(color, 0.06));
+        g.addColorStop(0.72, rgba(color, 0.62 + 0.2 * level));
         g.addColorStop(0.73, rgba(color, 0));
         g.addColorStop(1, rgba(color, 0));
         stroke = g;
       }
-      ctx.shadowColor = rgba(color, 0.8);
-      ctx.shadowBlur = 12 + 18 * level;
+      ctx.shadowColor = rgba(color, 0.5);
+      ctx.shadowBlur = 6 + 10 * level;
       arc(H * 0.7, a3, a3 + TAU * 0.72, thick, stroke);
       ctx.shadowBlur = 0;
 
@@ -152,8 +153,8 @@ export function VoiceOrb({
       for (let i = 0; i < TICKS; i++) {
         const a = base + (i / TICKS) * TAU - Math.PI / 2;
         const r0 = H * 0.5;
-        const r1 = r0 + H * 0.025 + ticks[i] * H * 0.11;
-        ctx.strokeStyle = rgba(color, 0.3 + 0.65 * ticks[i]);
+        const r1 = r0 + H * 0.022 + ticks[i] * H * 0.09;
+        ctx.strokeStyle = rgba(color, 0.18 + 0.45 * ticks[i]);
         ctx.beginPath();
         ctx.moveTo(c + Math.cos(a) * r0, c + Math.sin(a) * r0);
         ctx.lineTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1);
@@ -168,11 +169,11 @@ export function VoiceOrb({
       ctx.beginPath();
       ctx.arc(c, c, H * 0.4, 0, TAU);
       ctx.fill();
-      ctx.shadowColor = rgba(color, 0.9);
-      ctx.shadowBlur = 10 + 14 * level;
-      arc(H * 0.4, 0, TAU, 2, rgba(color, 0.95));
+      ctx.shadowColor = rgba(color, 0.55);
+      ctx.shadowBlur = 5 + 8 * level;
+      arc(H * 0.4, 0, TAU, 1.5, rgba(color, 0.7));
       ctx.shadowBlur = 0;
-      arc(H * 0.44, 0, TAU, 1, rgba(color, 0.3));
+      arc(H * 0.44, 0, TAU, 1, rgba(color, 0.16));
 
       frame = requestAnimationFrame(draw);
     };
