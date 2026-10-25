@@ -71,6 +71,10 @@ Two details worth knowing:
 
 - **Trustline on claim.** If the recipient's account can't hold the asset yet, the claim transaction adds the
   trustline first: `changeTrust` + `claimClaimableBalance`, signed once, applied atomically.
+- **Claiming is free for the recipient.** Nilo's sponsor account is the source of the claim transaction, so it pays
+  the fee, and it sponsors the trustline's 0.5 XLM reserve with `beginSponsoringFutureReserves` /
+  `endSponsoringFutureReserves`. The recipient only signs; their XLM balance does not change. If the sponsor is
+  unavailable, the app falls back to a claim the recipient pays for.
 - **Reserve.** While a payment is pending, 1 XLM of the sender's balance is locked (0.5 XLM per claimant). It is
   released when the balance is claimed or recovered.
 
@@ -83,7 +87,8 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 | The model never sees keys or builds transactions | It receives only the chat text and returns a schema-validated JSON intent. |
 | On-chain data can't inject instructions into the model | The model never reads memos, asset names or anything else from the ledger. |
 | The explanation matches the transaction | It is generated from the final XDR by fixed templates, then compared field by field with the validated intent. A mismatch blocks signing. |
-| Nilo never holds funds or keys | Signing happens in the user's wallet: Freighter or Albedo, or a Pollar email/Google wallet. The app only knows public addresses. |
+| Nilo never holds your funds or keys | Signing happens in the user's wallet: Freighter or Albedo, or a Pollar email/Google wallet. The app only knows users' public addresses. |
+| The sponsor only signs what it built | The server rebuilds each sponsored claim from the balance ID, checks on Horizon that you are the recipient and the deadline hasn't passed, then signs. It never signs XDR sent by the browser, and the explainer accepts the sponsored shape only from Nilo's own sponsor account. |
 
 This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every line comes from the transaction bytes:
 
@@ -107,14 +112,22 @@ This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every lin
    | `OPENAI_API_KEY` | OpenAI. Used only by the chat endpoint; the form (the **+** button next to the chat box) works without it. |
    | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. |
    | `VITE_POLLAR_API_KEY` | Pollar dashboard → Build → API Keys → **publishable** key (`pub_testnet_…`). Never use a secret key here: `VITE_*` values are shipped to the browser. |
+   | `SPONSOR_SECRET` | Written for you by step 4. Testnet secret of the account that pays claim fees and trustline reserves. Server-side only. |
 
 3. In the Pollar dashboard, add `http://localhost:5173` as an allowed origin and redirect URI, and make sure the app
    has credits for wallet creation.
 
-4. Create TESTUSD and the demo accounts. Their secrets are written to `.env.demo`:
+4. Create TESTUSD, the demo accounts and the sponsor account. The demo secrets are written to `.env.demo`, and
+   `SPONSOR_SECRET` to both `.env` and `.env.demo`:
 
    ```bash
    npm run setup:testnet
+   ```
+
+   Already set up before sponsored claims existed? Create just the sponsor, without touching the demo accounts:
+
+   ```bash
+   npm run setup:sponsor
    ```
 
 5. Check the core, then start everything:
@@ -132,7 +145,7 @@ The demo uses the nicknames `alice` (sender), `maria` (recipient) and `bob`, all
 |---|---|---|
 | 1. Send | On **Chat**, type "send 50 TESTUSD to maria, she has 2 minutes" (or click **Send a payment** to fill it in). | An explanation card naming Maria's address and the deadline. |
 | 2. Sign | Sign with your wallet. | The payment shows up as pending on **Sent**. |
-| 3. Claim | As the recipient, open **Claim** before the deadline. | The balance is claimed, with the trustline added if needed. |
+| 3. Claim | As the recipient, open **Claim** before the deadline. | The explanation says Nilo's sponsor pays the fee and the trustline reserve. The balance is claimed and Maria's XLM is unchanged. |
 | 4. Recover | Send to an address nobody controls, wait for the deadline, open **Sent**. | A **Recover** action that returns the funds to you. |
 
 Helper scripts:
@@ -140,6 +153,8 @@ Helper scripts:
 | Command | What it does |
 |---|---|
 | `npx tsx scripts/smoke-testnet.ts` | End-to-end check against testnet without a wallet: send → claim with trustline, then send to a stranger → wait → recover. Needs `.env.demo`. |
+| `npx tsx --env-file=.env scripts/smoke-sponsored.ts` | End-to-end check of a sponsored claim: maria (no trustline) claims while her XLM stays the same, and the server refuses a stranger and the sender. Needs `SPONSOR_SECRET`. |
+| `npm run setup:sponsor` | Creates (or replaces) the sponsor account and writes `SPONSOR_SECRET`. |
 | `npm run demo:reset-maria` | Resets the recipient account between takes. |
 
 <details>
@@ -154,16 +169,18 @@ Helper scripts:
 | Path | What it does |
 |---|---|
 | [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation. All the tests live here. |
-| [`apps/server`](apps/server) | One endpoint, `POST /api/extract`: chat messages in, structured intent (or a clarifying question) out. |
+| [`apps/server`](apps/server) | Two endpoints. `POST /api/extract`: chat messages in, structured intent (or a clarifying question) out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. |
 | [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
-| [`scripts/`](scripts) | Testnet setup, the wallet-free smoke test, and the demo reset. |
+| [`scripts/`](scripts) | Testnet and sponsor setup, the wallet-free smoke tests, and the demo reset. |
 
 ## Limits of v1
 
 - Testnet only. The allowed assets are XLM and a self-issued TESTUSD.
 - Recipients are a full `G…` address or a nickname from a fixed demo list (`alice`, `maria`, `bob`).
-- The recipient needs an existing Stellar account with enough XLM for a trustline. A Pollar wallet can get the
-  trustline sponsored from the Claim page.
+- The recipient needs an existing Stellar account. It doesn't need spare XLM: Nilo sponsors the fee and the
+  trustline reserve. Sponsoring account creation (`createAccount` with a 0 starting balance) is not done yet.
+- One sponsor account, with no rate limit beyond "one claim per balance". That's fine on testnet, but it would need
+  limits before mainnet.
 - Passkey smart wallets (`C…` addresses) are not supported: claimable balances are classic operations.
 
 ## Next
