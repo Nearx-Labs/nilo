@@ -293,7 +293,8 @@ export function ChatPage({ bot }: { bot: Bot }) {
           const money = value && formatFiat(value, DISPLAY_FIAT);
           return {
             line: `${b.balance} ${code}${money ? ` (≈ ${money})` : ""}`,
-            spoken: `about ${spokenAmount(b.balance)} ${code}${money ? `, worth about ${money}` : ""}`,
+            // Aloud, money is easier to follow than token units; units only when there is no price.
+            spoken: money ? `${money} in ${code}` : `about ${spokenAmount(b.balance)} ${code}`,
             value,
           };
         }),
@@ -305,7 +306,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
         `Your available funds:\n${rows.map((r) => `• ${r.line}`).join("\n")}` +
           (values.length ? "\n\nValues from the Reflector oracle on testnet." : "") +
           usdcNote,
-        `Balance: ${rows.flatMap((r) => r.spoken ?? []).join("; ")}.` +
+        `The user has ${rows.flatMap((r) => r.spoken ?? []).join(", and ")}.` +
           (total ? ` In total about ${total}.` : "") +
           " The exact amounts are on screen." +
           usdcNote,
