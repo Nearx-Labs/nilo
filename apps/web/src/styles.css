@@ -141,17 +141,8 @@ a.rail-card:hover { border-color: #2a6a50; }
 
 /* ---------- Chat page ---------- */
 .chat-page { gap: 28px; }
-.hero { display: flex; gap: 28px; align-items: flex-start; padding: 64px 0 32px; max-width: 610px; }
-.hero-avatar {
-  flex: none; width: 74px; height: 74px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-  background: radial-gradient(circle at 35% 30%, #a99dff 0%, #6c5ce7 55%, #4a3bc4 100%); color: #12133a;
-  box-shadow: 0 0 40px rgba(108, 92, 231, 0.45);
-}
-.hero h1 { font-size: 36px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
-.hero .accent { color: var(--accent-2); }
-.hero p { margin: 14px 0 0; color: #c6c9dc; font-size: 16.5px; line-height: 1.6; }
 
-.action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; max-width: 745px; }
+.action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
 .action-card {
   display: flex; align-items: center; gap: 18px; padding: 14px 20px 14px 16px; text-align: left;
   border-radius: 36px; border: 1px solid var(--border-strong); background: var(--surface);
@@ -255,12 +246,13 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 /* ---------- Page head extras ---------- */
 .eyebrow { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .page-head h1 { font-size: 34px; }
+.page-head .row { margin-top: 4px; }
 .accent-word { color: var(--accent-2); }
 .page-head .lead { color: var(--text); font-weight: 600; }
 .page-head p { line-height: 1.6; max-width: 520px; }
 
 /* ---------- Connected chip ---------- */
-button.connected {
+.connected {
   display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; font-size: 13px;
   background: var(--ok-bg); border: 1px solid var(--ok-border); color: var(--ok);
 }
@@ -306,9 +298,6 @@ button.connected:disabled { opacity: 1; cursor: default; }
   .nav-item { flex: 1; justify-content: center; gap: 8px; padding: 10px; }
   .agent-card { display: none; }
   .content { padding: 20px 16px 48px; }
-  .hero { padding: 16px 0 8px; gap: 16px; flex-direction: column; }
-  .hero h1 { font-size: 28px; }
-  .hero-avatar { width: 56px; height: 56px; }
   .action-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .composer-bar .link { display: none; }
   .page-head h1 { font-size: 28px; }
