@@ -5,19 +5,27 @@ import {
   mismatches,
   validateIntent,
 } from "@nilo/core";
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ChevronIcon, CloseIcon, PlusIcon, SendIcon, SparkleIcon, WalletIcon } from "../components/icons";
-import { type ChatActionState, QUICK_ACTIONS, useQuickAction } from "../components/Layout";
+import { type Bot, type ChatMessage, DEFAULT_BOT, loadChat, useBots } from "../bots/store";
+import { StroopyAvatar } from "../bots/StroopyAvatar";
+import {
+  ArrowUpIcon,
+  CloseIcon,
+  EraseIcon,
+  MicIcon,
+  MoreIcon,
+  PlusIcon,
+  ShieldIcon,
+  TrashIcon,
+  WalletIcon,
+  WaveformIcon,
+} from "../components/icons";
+import { type ChatActionState, MoreMenu, PageTop, QUICK_ACTIONS, TRUST_URL, useQuickAction } from "../components/Layout";
 import { type Prepared, SignPanel } from "../components/SignPanel";
 import { asSnapshot, config, loadAccount } from "../stellar";
-import { formatLocal, short } from "../time";
+import { formatLocal } from "../time";
 import { useWallet } from "../wallet";
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
 
 type ExtractResponse =
   | { status: "complete"; intent: SendIntent }
@@ -25,6 +33,33 @@ type ExtractResponse =
   | { status: "error"; message: string };
 
 const EXAMPLE = "Send 50 TESTUSD to maria, she has 2 minutes";
+/** Pixels from the bottom that still count as "following" the conversation. */
+const STICK_PX = 80;
+
+const CHECKING = "Checking and building the transaction…";
+const DONE = "Sent. The recipient can now claim it.";
+const CANCELLED = "Cancelled. Nothing was sent.";
+const INTERRUPTED = "That review was closed. If you didn't sign it, nothing was sent.";
+const ENDINGS = [DONE, CANCELLED, INTERRUPTED];
+
+/** A saved chat can end mid-review (reload, other bot); the sign panel is not saved, so say so. */
+function loadSettled(botId: string): ChatMessage[] {
+  const saved = loadChat(botId);
+  return saved[saved.length - 1]?.content.endsWith(CHECKING) ? [...saved, { role: "assistant", content: INTERRUPTED }] : saved;
+}
+
+/** What /api/extract gets: the turns since the last finished payment, within the server's limits (≤ 30, user first). */
+function forExtract(messages: ChatMessage[]): ChatMessage[] {
+  let from = messages.length;
+  while (from > 0 && !(messages[from - 1].role === "assistant" && ENDINGS.includes(messages[from - 1].content))) from--;
+  const turns = messages
+    .slice(from)
+    .slice(-30)
+    .map((m) => ({ ...m, content: m.content.slice(0, 2000) }))
+    .filter((m) => m.content.trim());
+  const start = turns.findIndex((m) => m.role === "user");
+  return start < 0 ? [] : turns.slice(start);
+}
 
 async function validateFresh(intent: SendIntent, address: string): Promise<ResolvedIntent> {
   const account = await loadAccount(address);
@@ -34,9 +69,10 @@ async function validateFresh(intent: SendIntent, address: string): Promise<Resol
   return v.intent;
 }
 
-export function SendPage() {
-  const { address, connect } = useWallet();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function ChatPage({ bot }: { bot: Bot }) {
+  const { address, connect, error: walletError } = useWallet();
+  const { saveChat, deleteBot } = useBots();
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadSettled(bot.id));
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"chat" | "form">("chat");
@@ -44,14 +80,29 @@ export function SendPage() {
     null,
   );
   const [sent, setSent] = useState<{ deadline: number; balanceId: string } | null>(null);
+  const fresh = messages.length === 0 && !pending;
+  // The welcome screen reads from the top; only a conversation (or the form) follows the bottom.
+  const idle = fresh && mode === "chat";
 
-  const say = (content: string) => setMessages((m) => [...m, { role: "assistant", content }]);
+  const say =(content: string) => setMessages((m) => [...m, { role: "assistant", content }]);
   const input = useRef<HTMLTextAreaElement>(null);
-  const runQuick = useQuickAction();
+  const scroller = useRef<HTMLDivElement>(null);
+  const flow = useRef<HTMLDivElement>(null);
+  const stick = useRef(!idle);
+  const request = useRef<AbortController | null>(null);
+  const chatPath = `/chat/${bot.id}`;
+  const runQuick = useQuickAction(chatPath);
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Quick actions (here or in the rail) arrive as router state; run once, then clear it.
+  // A question still waiting for its reply is not saved: leaving the bot drops the request.
+  useEffect(() => {
+    const unanswered = busy && messages[messages.length - 1]?.role === "user";
+    saveChat(bot.id, unanswered ? messages.slice(0, -1) : messages);
+  }, [bot.id, messages, busy, saveChat]);
+  useEffect(() => () => request.current?.abort(), []);
+
+  // Quick actions arrive as router state; run once, then clear it.
   useEffect(() => {
     const state = location.state as ChatActionState | null;
     if (!state?.action) return;
@@ -66,10 +117,39 @@ export function SendPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
+  // Follow the conversation as it grows (new messages, the sign panel building), unless the user scrolled up.
+  useEffect(() => {
+    const el = scroller.current;
+    const content = flow.current;
+    if (!el || !content) return;
+    const onScroll = () => (stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX);
+    const ro = new ResizeObserver(() => stick.current && el.scrollTo({ top: el.scrollHeight }));
+    el.addEventListener("scroll", onScroll, { passive: true });
+    ro.observe(content);
+    if (stick.current) el.scrollTo({ top: el.scrollHeight });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    stick.current = !idle;
+    scroller.current?.scrollTo({ top: idle ? 0 : scroller.current.scrollHeight, behavior: "smooth" });
+  }, [messages.length, busy, mode, pending, idle]);
+
+  // Grow the composer with its text, up to six lines.
+  useLayoutEffect(() => {
+    const el = input.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 6 * 22 + 22)}px`;
+  }, [draft]);
+
   async function checkBalance() {
     setMessages((m) => [...m, { role: "user", content: "What's my balance?" }]);
     if (!address) {
-      say("Sign in first (button at the top right), then I can check your balance.");
+      say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then I can check your balance.");
       connect();
       return;
     }
@@ -91,7 +171,7 @@ export function SendPage() {
   async function startReview(intent: SendIntent) {
     const from = address;
     if (!from) {
-      say("Sign in first (button at the top right), then try again.");
+      say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then try again.");
       connect();
       return;
     }
@@ -116,17 +196,22 @@ export function SendPage() {
     setMessages(next);
     setDraft("");
     setBusy(true);
+    // The send button is swapped out once the draft clears; keep the keyboard in the composer.
+    input.current?.focus();
+    const ctrl = new AbortController();
+    request.current = ctrl;
     try {
       const res = await fetch("/api/extract", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ messages: forExtract(next) }),
+        signal: ctrl.signal,
       });
       const data = (await res.json()) as ExtractResponse;
       if (data.status === "complete") {
         say(
           `Got it: ${data.intent.amount} ${data.intent.asset} to ${data.intent.recipient}, ` +
-            `claimable for ${data.intent.deadlineSeconds} seconds. Checking and building the transaction…`,
+            `claimable for ${data.intent.deadlineSeconds} seconds. ${CHECKING}`,
         );
         await startReview(data.intent);
       } else if (data.status === "needs_clarification") {
@@ -135,7 +220,7 @@ export function SendPage() {
         say(data.message);
       }
     } catch {
-      say("I couldn't reach the assistant. You can use the form instead.");
+      if (!ctrl.signal.aborted) say("I couldn't reach the assistant. You can use the form instead.");
     } finally {
       setBusy(false);
     }
@@ -168,159 +253,216 @@ export function SendPage() {
   function cancel() {
     setPending(null);
     setSent(null);
-    say("Cancelled. Nothing was sent.");
+    say(CANCELLED);
   }
 
-  const fresh = messages.length === 0 && !pending;
+  function fillExample() {
+    setMode("chat");
+    setDraft(EXAMPLE);
+    input.current?.focus();
+  }
+
+  const hasText = draft.trim().length > 0;
+  const deletable = bot.id !== DEFAULT_BOT.id;
 
   return (
-    <div className="stack chat-page page-wide">
-      <header className="page-head">
-        <span className="eyebrow">Chat</span>
-        <h1>
-          Hi! I'm <span className="accent-word">Nilo</span>
-        </h1>
-        <p className="muted">
-          <strong className="lead">Your payments agent on Stellar.</strong>{" "}
-          {fresh
-            ? "Tell me who should get what and how long they have. I build the transaction, explain it in plain words before you sign, and you get it back if nobody claims it."
-            : "Ask for another payment, check your balance, or start over."}
-        </p>
-        <div className="row">
-          {address && (
-            <>
-              <span className="connected">
-                <WalletIcon width={16} height={16} /> Connected
-              </span>
-              <span className="muted small">as {short(address)}</span>
-            </>
-          )}
-          {!fresh && (
-            <button type="button" className="secondary new-chat" onClick={reset} disabled={busy}>
-              <PlusIcon width={16} height={16} /> New chat
-            </button>
-          )}
-        </div>
-      </header>
+    <div className="view">
+      <PageTop
+        avatar={<StroopyAvatar variant={bot.variant} color={bot.color} size={28} />}
+        title={bot.name}
+        actions={
+          <MoreMenu label="Chat options" trigger={<MoreIcon />}>
+            {(close) => (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={busy}
+                  onClick={() => {
+                    close();
+                    reset();
+                  }}
+                >
+                  <EraseIcon width={18} height={18} /> Clear chat
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={busy || !!pending}
+                  onClick={() => {
+                    close();
+                    checkBalance();
+                  }}
+                >
+                  <WalletIcon width={18} height={18} /> Check balance
+                </button>
+                {deletable && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="danger"
+                    onClick={() => {
+                      close();
+                      if (!window.confirm(`Delete ${bot.name}? Its chat history is deleted too.`)) return;
+                      navigate(`/chat/${DEFAULT_BOT.id}`);
+                      deleteBot(bot.id);
+                    }}
+                  >
+                    <TrashIcon width={18} height={18} /> Delete bot
+                  </button>
+                )}
+              </>
+            )}
+          </MoreMenu>
+        }
+      />
 
-      {fresh && (
-        <>
-          <div className="action-grid">
-            {QUICK_ACTIONS.map((a) => (
-              <button key={a.title} className="action-card" onClick={() => runQuick(a)}>
-                <span className="icon-tile plain">
-                  <a.Icon />
-                </span>
-                <span className="action-text">
-                  <strong>{a.title}</strong>
-                  <span>{a.hint}</span>
-                </span>
-                <ChevronIcon className="chevron" />
+      <div className="view-scroll" ref={scroller}>
+        <div className="flow" ref={flow} role="log" aria-label="Conversation">
+          {fresh && (
+            <section className="hero">
+              <StroopyAvatar variant={bot.variant} color={bot.color} size={96} />
+              <h1>Hi! I'm {bot.name}</h1>
+              <p className="hero-sub">
+                <strong>Your payments agent on Stellar.</strong> Tell me who should get what and how long they have. I
+                build the transaction, explain it in plain words before you sign, and you get it back if nobody claims it.
+              </p>
+              <div className="suggestions">
+                {QUICK_ACTIONS.map((a) => (
+                  <button key={a.title} type="button" className="suggestion" title={a.hint} onClick={() => runQuick(a)}>
+                    <a.Icon className={`tone-${a.tone}`} />
+                    {a.title}
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="suggestion try" onClick={fillExample}>
+                Try: {EXAMPLE}
               </button>
-            ))}
-          </div>
-          <p className="divider-label">
-            <span>Or just type your request</span>
-          </p>
-        </>
-      )}
+              <p className="muted small">
+                Contacts: {Object.keys(config.contacts).join(", ")}. Or paste a full G… address.
+              </p>
+              <a className="safe-note" href={TRUST_URL} target="_blank" rel="noreferrer">
+                <ShieldIcon width={16} height={16} />
+                Safe by design: every transaction is decoded and explained before you sign.
+              </a>
+            </section>
+          )}
 
-      {messages.length > 0 && (
-        <section className="panel conversation" aria-label="Conversation">
           {messages.map((m, i) => (
             <div key={i} className={`msg ${m.role}`}>
-              {m.role === "assistant" && (
-                <span className="icon-tile violet plain msg-avatar" aria-hidden="true">
-                  <SparkleIcon width={14} height={14} />
-                </span>
-              )}
               <div className={`bubble ${m.role}`}>{m.content}</div>
             </div>
           ))}
           {busy && (
             <div className="msg assistant">
-              <span className="icon-tile violet plain msg-avatar" aria-hidden="true">
-                <SparkleIcon width={14} height={14} />
-              </span>
-              <div className="bubble assistant muted">…</div>
+              <div className="bubble assistant typing" role="status">
+                <span className="sr-only">{bot.name} is typing…</span>
+                <i aria-hidden="true" />
+                <i aria-hidden="true" />
+                <i aria-hidden="true" />
+              </div>
             </div>
           )}
-        </section>
-      )}
 
-      {mode === "chat" ? (
+          {mode === "form" && (
+            <div className="msg assistant wide">
+              <section className="panel form-card">
+                <div className="form-head">
+                  <strong>New payment</strong>
+                  <button type="button" className="icon-btn ghost small-btn" onClick={() => setMode("chat")} title="Back to chat" aria-label="Back to chat">
+                    <CloseIcon width={18} height={18} />
+                  </button>
+                </div>
+                <IntentForm disabled={!!pending} onSubmit={startReview} />
+              </section>
+            </div>
+          )}
+
+          {pending && address && prepare && (
+            <div className="msg assistant wide">
+              {pending.warning && <p className="warning">{pending.warning}</p>}
+              <SignPanel
+                key={JSON.stringify(pending.intent)}
+                prepare={prepare}
+                signLabel="Sign and send"
+                onCancel={cancel}
+                onDone={() => say(DONE)}
+                doneMessage={
+                  sent && (
+                    <>
+                      <p>
+                        The recipient can claim it on the <Link to="/claim">Claim</Link> page until{" "}
+                        {formatLocal(sent.deadline)}. After that, recover it on <Link to="/sent">Sent</Link>.
+                      </p>
+                      <button className="secondary" onClick={() => setPending(null)}>
+                        New payment
+                      </button>
+                    </>
+                  )
+                }
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="composer-wrap">
         <form onSubmit={onChat} className="composer">
+          <button
+            type="button"
+            className={`icon-btn${mode === "form" ? " on" : ""}`}
+            onClick={() => setMode((m) => (m === "form" ? "chat" : "form"))}
+            title={mode === "form" ? "Back to chat" : "Use the form instead"}
+            aria-label={mode === "form" ? "Back to chat" : "Use the form instead"}
+            aria-pressed={mode === "form"}
+          >
+            <PlusIcon />
+          </button>
           <textarea
             ref={input}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              // Enter also confirms an IME candidate; only send once composition is over.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                 e.preventDefault();
                 onChat();
               }
             }}
-            placeholder="Who should get what, and how long do they have?"
-            disabled={busy || !!pending}
+            placeholder={`Message ${bot.name}`}
+            readOnly={busy}
+            disabled={!!pending}
             aria-label="Message"
-            rows={2}
+            rows={1}
           />
-          <div className="composer-bar">
-            <button type="button" className="icon-button" onClick={() => setMode("form")} title="Use the form instead" aria-label="Use the form instead">
-              <PlusIcon />
+          <button
+            type="button"
+            className="icon-btn ghost voice"
+            disabled
+            aria-disabled="true"
+            title="Voice input — coming soon"
+            aria-label="Voice input — coming soon"
+          >
+            <MicIcon />
+          </button>
+          {hasText ? (
+            <button type="submit" className="round-send" disabled={busy || !!pending} aria-label="Send" title="Send">
+              <ArrowUpIcon />
             </button>
-            {fresh && (
-              <button type="button" className="link small" onClick={() => setDraft(EXAMPLE)}>
-                Try: {EXAMPLE}
-              </button>
-            )}
-            <button className="send-button" disabled={busy || !draft.trim() || !!pending}>
-              <SendIcon width={18} height={18} /> Send
+          ) : (
+            <button
+              type="button"
+              className="round-send voice"
+              disabled
+              aria-disabled="true"
+              title="Voice mode — coming soon"
+              aria-label="Voice mode — coming soon"
+            >
+              <WaveformIcon />
             </button>
-          </div>
+          )}
         </form>
-      ) : (
-        <div className="form-wrap">
-          <div className="form-head">
-            <strong>New payment</strong>
-            <button type="button" className="icon-button" onClick={() => setMode("chat")} title="Back to chat" aria-label="Back to chat">
-              <CloseIcon />
-            </button>
-          </div>
-          <IntentForm disabled={!!pending} onSubmit={startReview} />
-        </div>
-      )}
-
-      {/* The rail lists contacts on wide screens; this copy shows when it is hidden. */}
-      <p className="muted small contacts-inline">
-        Contacts: {Object.keys(config.contacts).join(", ")}. Or paste a full G… address.
-      </p>
-
-      {pending && address && prepare && (
-        <>
-          {pending.warning && <p className="warning">{pending.warning}</p>}
-          <SignPanel
-            key={JSON.stringify(pending.intent)}
-            prepare={prepare}
-            signLabel="Sign and send"
-            onCancel={cancel}
-            onDone={() => say("Sent. The recipient can now claim it.")}
-            doneMessage={
-              sent && (
-                <>
-                  <p>
-                    The recipient can claim it on the <Link to="/claim">Claim</Link> page until{" "}
-                    {formatLocal(sent.deadline)}. After that, recover it on <Link to="/sent">Sent</Link>.
-                  </p>
-                  <button className="secondary" onClick={() => setPending(null)}>
-                    New payment
-                  </button>
-                </>
-              )
-            }
-          />
-        </>
-      )}
+      </div>
     </div>
   );
 }

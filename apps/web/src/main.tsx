@@ -2,10 +2,11 @@ import { PollarProvider } from "@pollar/react";
 import "@pollar/react/styles.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { Rail, Sidebar, Topbar } from "./components/Layout";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { BotsProvider, DEFAULT_BOT, useBots } from "./bots/store";
+import { Shell } from "./components/Layout";
 import { ClaimPage } from "./pages/Claim";
-import { SendPage } from "./pages/Send";
+import { ChatPage } from "./pages/Send";
 import { SentPage } from "./pages/Sent";
 import "./styles.css";
 
@@ -18,31 +19,39 @@ const POLLAR_CLIENT = {
   logLevel: import.meta.env.DEV ? ("debug" as const) : undefined,
 };
 
+const HOME = `/chat/${DEFAULT_BOT.id}`;
+
+function ChatRoute() {
+  const { botId } = useParams();
+  const bot = useBots().getBot(botId);
+  if (!bot) return <Navigate to={HOME} replace />;
+  // Keyed so switching bots starts from that bot's own state.
+  return <ChatPage key={bot.id} bot={bot} />;
+}
+
 function App() {
   if (!POLLAR_API_KEY) {
     return (
-      <main className="content">
+      <main className="main fatal">
         <p className="error">Set VITE_POLLAR_API_KEY in the repository's .env file and restart the dev server.</p>
       </main>
     );
   }
   return (
     <PollarProvider client={POLLAR_CLIENT}>
-      <BrowserRouter>
-        <div className="app">
-          <Topbar />
-          <Sidebar />
-          <main className="content">
+      <BotsProvider>
+        <BrowserRouter>
+          <Shell>
             <Routes>
-              <Route path="/send" element={<SendPage />} />
+              <Route path="/chat/:botId" element={<ChatRoute />} />
               <Route path="/claim" element={<ClaimPage />} />
               <Route path="/sent" element={<SentPage />} />
-              <Route path="*" element={<Navigate to="/send" replace />} />
+              <Route path="/send" element={<Navigate to={HOME} replace />} />
+              <Route path="*" element={<Navigate to={HOME} replace />} />
             </Routes>
-          </main>
-          <Rail />
-        </div>
-      </BrowserRouter>
+          </Shell>
+        </BrowserRouter>
+      </BotsProvider>
     </PollarProvider>
   );
 }

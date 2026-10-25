@@ -48,20 +48,10 @@ export const HistoryIcon = (p: P) => (
     <path d="M12 7v5l3 2" />
   </Icon>
 );
-export const ChatIcon = (p: P) => (
-  <Icon {...p}>
-    <path d="M21 12a8 8 0 0 1-8 8H4l2-3.2A8 8 0 1 1 21 12z" />
-  </Icon>
-);
 export const ShieldIcon = (p: P) => (
   <Icon {...p}>
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     <path d="m9 12 2 2 4-4" />
-  </Icon>
-);
-export const SparkleIcon = (p: P) => (
-  <Icon fill="currentColor" stroke="none" {...p}>
-    <path d="M12 2c.6 4.8 3.2 7.4 8 8-4.8.6-7.4 3.2-8 8-.6-4.8-3.2-7.4-8-8 4.8-.6 7.4-3.2 8-8z" />
   </Icon>
 );
 export const PlusIcon = (p: P) => (
@@ -72,11 +62,6 @@ export const PlusIcon = (p: P) => (
 export const ChevronIcon = (p: P) => (
   <Icon {...p}>
     <path d="m9 6 6 6-6 6" />
-  </Icon>
-);
-export const BoltIcon = (p: P) => (
-  <Icon {...p}>
-    <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
   </Icon>
 );
 export const CloseIcon = (p: P) => (
@@ -93,5 +78,60 @@ export const RefreshIcon = (p: P) => (
 export const InfoIcon = (p: P) => (
   <Icon fill="currentColor" stroke="none" {...p}>
     <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4.6a1.3 1.3 0 1 1 0 2.6 1.3 1.3 0 0 1 0-2.6zM13.4 17h-2.8v-6.6h2.8z" />
+  </Icon>
+);
+export const SearchIcon = (p: P) => (
+  <Icon {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Icon>
+);
+export const MicIcon = (p: P) => (
+  <Icon {...p}>
+    <rect x="9" y="2" width="6" height="12" rx="3" />
+    <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+    <path d="M12 18v4" />
+  </Icon>
+);
+export const WaveformIcon = (p: P) => (
+  <Icon strokeWidth="2.2" {...p}>
+    <path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4" />
+  </Icon>
+);
+export const ArrowUpIcon = (p: P) => (
+  <Icon strokeWidth="2.2" {...p}>
+    <path d="M12 19V5" />
+    <path d="m5 12 7-7 7 7" />
+  </Icon>
+);
+export const MoreIcon = (p: P) => (
+  <Icon fill="currentColor" stroke="none" {...p}>
+    <circle cx="5" cy="12" r="1.8" />
+    <circle cx="12" cy="12" r="1.8" />
+    <circle cx="19" cy="12" r="1.8" />
+  </Icon>
+);
+export const MenuIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </Icon>
+);
+export const TrashIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M3 6h18" />
+    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+  </Icon>
+);
+export const EraseIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+    <path d="M3 3v5h5" />
+  </Icon>
+);
+export const UserIcon = (p: P) => (
+  <Icon {...p}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
   </Icon>
 );

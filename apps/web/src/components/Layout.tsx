@@ -1,21 +1,24 @@
-// App shell: top bar, left navigation and the right-hand rail.
+// App shell: the bot sidebar (an off-canvas drawer on phones) and the main column.
 import { WalletButton } from "@pollar/react";
-import type { ComponentType, SVGProps } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
-import { config } from "../stellar";
-import { useWallet } from "../wallet";
 import {
-  ChatIcon,
-  ChevronIcon,
-  HistoryIcon,
-  InboxIcon,
-  SendIcon,
-  ShieldIcon,
-  SparkleIcon,
-  WalletIcon,
-} from "./icons";
+  type ComponentType,
+  type ReactNode,
+  type Ref,
+  type SVGProps,
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { CreateBotModal } from "../bots/CreateBotModal";
+import { DEFAULT_BOT, DEFAULT_PREVIEW, useBots } from "../bots/store";
+import { StroopyAvatar } from "../bots/StroopyAvatar";
+import { useWallet } from "../wallet";
+import { HistoryIcon, InboxIcon, MenuIcon, PlusIcon, SearchIcon, SendIcon, UserIcon, WalletIcon } from "./icons";
 
-/** Chat actions the Send page runs when it is opened with this router state. */
+/** Chat actions the chat page runs when it is opened with this router state. */
 export type ChatAction = "example" | "balance";
 export interface ChatActionState {
   action: ChatAction;
@@ -28,146 +31,232 @@ export interface QuickAction {
   hint: string;
   Icon: ComponentType<SVGProps<SVGSVGElement>>;
   tone: "violet" | "blue" | "green" | "purple";
-  to: string;
+  /** Omitted for chat actions, which run in the current bot's chat. */
+  to?: string;
   action?: ChatAction;
 }
 
 export const QUICK_ACTIONS: QuickAction[] = [
-  { title: "Send a payment", hint: "To a contact or any G… address", Icon: SendIcon, tone: "violet", to: "/send", action: "example" },
-  { title: "Check balance", hint: "View your available funds", Icon: WalletIcon, tone: "blue", to: "/send", action: "balance" },
+  { title: "Send a payment", hint: "To a contact or any G… address", Icon: SendIcon, tone: "violet", action: "example" },
+  { title: "Check balance", hint: "View your available funds", Icon: WalletIcon, tone: "blue", action: "balance" },
   { title: "Claim a payment", hint: "See what's waiting for you", Icon: InboxIcon, tone: "green", to: "/claim" },
   { title: "Sent payments", hint: "Track or recover what you sent", Icon: HistoryIcon, tone: "purple", to: "/sent" },
 ];
 
-export function useQuickAction() {
+export function useQuickAction(chatPath = `/chat/${DEFAULT_BOT.id}`) {
   const navigate = useNavigate();
   return (a: QuickAction) =>
-    navigate(a.to, a.action ? { state: { action: a.action, at: Date.now() } satisfies ChatActionState } : undefined);
+    navigate(a.to ?? chatPath, a.action ? { state: { action: a.action, at: Date.now() } satisfies ChatActionState } : undefined);
 }
 
 /** README section that explains why the decoded explanation can be trusted. */
-const TRUST_URL = "https://github.com/Nearx-Labs/nilo#why-you-can-trust-what-you-sign";
+export const TRUST_URL = "https://github.com/Nearx-Labs/nilo#why-you-can-trust-what-you-sign";
 
-/** Nilo's mark: a rounded "N" on a dark violet disc. */
-function LogoMark() {
+const ShellContext = createContext<{ openDrawer: () => void; drawerOpen: boolean }>({
+  openDrawer: () => {},
+  drawerOpen: false,
+});
+
+export function Shell({ children }: { children: ReactNode }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const opener = useRef<HTMLElement | null>(null);
+  const sidebar = useRef<HTMLElement>(null);
+  const wasOpen = useRef(false);
+  const { pathname } = useLocation();
+
+  useEffect(() => setDrawerOpen(false), [pathname]);
+  // Move focus into the drawer when it opens, and back to the menu button when it closes.
+  useEffect(() => {
+    const el = sidebar.current;
+    if (drawerOpen) el?.querySelector<HTMLElement>(".side-row.active, .side-row")?.focus();
+    else if (wasOpen.current && (!document.activeElement || document.activeElement === document.body || el?.contains(document.activeElement)))
+      document.querySelector<HTMLElement>(".menu-btn")?.focus();
+    wasOpen.current = drawerOpen;
+  }, [drawerOpen]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawerOpen(false);
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+
+  function openCreate() {
+    opener.current = document.activeElement as HTMLElement | null;
+    setCreating(true);
+  }
+  function closeCreate() {
+    setCreating(false);
+    opener.current?.focus();
+  }
+
   return (
-    <svg className="logo" viewBox="0 0 40 40" width="40" height="40" aria-hidden="true">
-      <defs>
-        <linearGradient id="logo-n" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#c7c2ff" />
-          <stop offset="1" stopColor="#7b6cff" />
-        </linearGradient>
-      </defs>
-      <circle cx="20" cy="20" r="20" fill="#1c1f45" />
-      <path
-        d="M12.5 26V15.5a3.2 3.2 0 0 1 5.9-1.7l3.2 5.2 3.2 5.2a3.2 3.2 0 0 0 5.9-1.7V14"
-        fill="none"
-        stroke="url(#logo-n)"
-        strokeWidth="4.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <ShellContext.Provider value={{ openDrawer: () => setDrawerOpen(true), drawerOpen }}>
+      <div className={`app${drawerOpen ? " drawer-open" : ""}`}>
+        <Sidebar ref={sidebar} onCreate={openCreate} onNavigate={() => setDrawerOpen(false)} />
+        <div className="scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+        <main className="main">{children}</main>
+        {creating && <CreateBotModal onClose={closeCreate} />}
+      </div>
+    </ShellContext.Provider>
   );
 }
 
-export function Topbar() {
+function Sidebar({ ref, onCreate, onNavigate }: { ref: Ref<HTMLElement>; onCreate: () => void; onNavigate: () => void }) {
+  const { bots, previews } = useBots();
   const { error } = useWallet();
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const shown = searching && q ? bots.filter((b) => b.name.toLowerCase().includes(q)) : bots;
+
   return (
-    <header className="topbar">
-      <div className="brand">
-        <LogoMark />
-        <span className="brand-name">Nilo</span>
-        <span className="tag">Payments agent</span>
+    <aside ref={ref} className="sidebar" id="sidebar" aria-label="Bots and payments">
+      <div className="side-head">
+        <span className="wordmark">Nilo</span>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => {
+            setSearching((s) => !s);
+            setQuery("");
+          }}
+          aria-label="Search bots"
+          aria-pressed={searching}
+          title="Search bots"
+        >
+          <SearchIcon />
+        </button>
+        <button type="button" className="icon-btn" onClick={onCreate} aria-label="Create bot" title="Create bot">
+          <PlusIcon />
+        </button>
       </div>
-      <div className="topbar-right">
-        <span className="status">
-          <i className="dot" /> Testnet
-        </span>
-        <div className="wallet-chip">
-          <WalletButton />
+      {searching && (
+        <input
+          className="side-search"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Escape") return;
+            e.stopPropagation();
+            setSearching(false);
+            setQuery("");
+          }}
+          placeholder="Search bots"
+          aria-label="Search bots"
+          autoFocus
+        />
+      )}
+
+      <nav className="side-list">
+        <NavLink to="/claim" className="side-row" onClick={onNavigate}>
+          <span className="row-avatar tone-green">
+            <InboxIcon />
+          </span>
+          <span className="row-text">
+            <strong>Claim</strong>
+            <span>Payments waiting for you</span>
+          </span>
+        </NavLink>
+        <NavLink to="/sent" className="side-row" onClick={onNavigate}>
+          <span className="row-avatar tone-blue">
+            <HistoryIcon />
+          </span>
+          <span className="row-text">
+            <strong>Sent</strong>
+            <span>Track or recover what you sent</span>
+          </span>
+        </NavLink>
+
+        <p className="side-label">Bots</p>
+        {shown.map((b) => (
+          <NavLink key={b.id} to={`/chat/${b.id}`} className="side-row" onClick={onNavigate}>
+            <StroopyAvatar variant={b.variant} color={b.color} size={52} />
+            <span className="row-text">
+              <strong>{b.name}</strong>
+              <span>{previews[b.id] ?? DEFAULT_PREVIEW}</span>
+            </span>
+          </NavLink>
+        ))}
+        {shown.length === 0 && <p className="side-empty">No bots match "{query.trim()}".</p>}
+      </nav>
+
+      {error && <p className="error small side-error">{error}</p>}
+      <div className="side-foot">
+        <div className="me">
+          <span className="me-avatar">
+            <UserIcon width={18} height={18} />
+          </span>
+          <div className="wallet-chip">
+            <WalletButton />
+          </div>
         </div>
-        {error && <span className="error small wallet-error">{error}</span>}
+        <span className="net-chip" role="img" aria-label="Stellar testnet" title="Stellar testnet">
+          <i className="dot" />
+        </span>
       </div>
+    </aside>
+  );
+}
+
+/** Floating header of the main column: menu (phones), title pill and optional actions. */
+export function PageTop({ avatar, title, actions }: { avatar: ReactNode; title: string; actions?: ReactNode }) {
+  const { openDrawer, drawerOpen } = useContext(ShellContext);
+  return (
+    <header className="page-top">
+      <button
+        type="button"
+        className="icon-btn menu-btn"
+        onClick={openDrawer}
+        aria-label="Open menu"
+        aria-controls="sidebar"
+        aria-expanded={drawerOpen}
+      >
+        <MenuIcon />
+      </button>
+      <div className="title-pill">
+        {avatar}
+        <span>{title}</span>
+      </div>
+      <div className="page-actions">{actions}</div>
     </header>
   );
 }
 
-const NAV = [
-  { to: "/send", label: "Chat", Icon: ChatIcon },
-  { to: "/claim", label: "Claim", Icon: InboxIcon },
-  { to: "/sent", label: "Sent", Icon: SendIcon },
-];
-
-export function Sidebar() {
+/** Small round menu anchored to its button; closes on outside click or Escape. */
+export function MoreMenu({ label, trigger, children }: { label: string; trigger: ReactNode; children: (close: () => void) => ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => root.current?.contains(e.target as Node) || setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    addEventListener("mousedown", onDown);
+    addEventListener("keydown", onKey);
+    return () => {
+      removeEventListener("mousedown", onDown);
+      removeEventListener("keydown", onKey);
+    };
+  }, [open]);
   return (
-    <aside className="sidebar">
-      <nav className="nav">
-        {NAV.map(({ to, label, Icon }) => (
-          <NavLink key={to} to={to} className="nav-item">
-            <Icon /> {label}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="agent-card">
-        <span className="icon-tile green">
-          <ShieldIcon />
-        </span>
-        <div>
-          <strong>Payments agent</strong>
-          <p>Secure, autonomous and always on your side.</p>
+    <div className="more" ref={root}>
+      <button
+        type="button"
+        className="icon-btn"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={label}
+      >
+        {trigger}
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          {children(() => setOpen(false))}
         </div>
-      </div>
-    </aside>
-  );
-}
-
-export function Rail() {
-  const run = useQuickAction();
-  return (
-    <aside className="rail">
-      <a className="rail-card safe" href={TRUST_URL} target="_blank" rel="noreferrer">
-        <span className="icon-tile green">
-          <ShieldIcon />
-        </span>
-        <div>
-          <strong>Safe by design</strong>
-          <p>
-            Every transaction is decoded from its XDR and explained before you sign. Unclaimed funds come back to you
-            after the deadline.
-          </p>
-        </div>
-        <ChevronIcon className="chevron" />
-      </a>
-
-      <div className="rail-card list">
-        <h3>Quick actions</h3>
-        {QUICK_ACTIONS.map((a) => (
-          <button key={a.title} className="rail-action" onClick={() => run(a)}>
-            <span className={`icon-tile ${a.tone}`}>
-              <a.Icon />
-            </span>
-            <span className="rail-action-text">
-              <strong>{a.title}</strong>
-              <span>{a.hint}</span>
-            </span>
-            <ChevronIcon className="chevron" />
-          </button>
-        ))}
-      </div>
-
-      <div className="rail-card">
-        <span className="icon-tile violet plain">
-          <SparkleIcon />
-        </span>
-        <div>
-          <strong>Need something else?</strong>
-          <p>Just tell me who should get what, in plain language. I'm here to help.</p>
-          <p className="contacts">
-            Contacts: {Object.keys(config.contacts).join(", ")}. Or paste a full G… address.
-          </p>
-        </div>
-      </div>
-    </aside>
+      )}
+    </div>
   );
 }

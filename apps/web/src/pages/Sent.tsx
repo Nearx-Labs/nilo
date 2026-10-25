@@ -1,5 +1,7 @@
 import { BalanceList } from "../components/Balances";
 import { HowItWorks } from "../components/HowItWorks";
+import { HistoryIcon } from "../components/icons";
+import { PageTop } from "../components/Layout";
 
 const STEPS = [
   { title: "You send a payment", text: "It waits on the network until someone claims it." },
@@ -9,19 +11,25 @@ const STEPS = [
 
 export function SentPage() {
   return (
-    <div className="stack page-wide">
-      <header className="page-head">
-        <span className="eyebrow">Sent</span>
-        <h1>
-          Payments <span className="accent-word">you</span> sent
-        </h1>
-        <p className="muted">
-          <strong className="lead">Nothing gets lost.</strong> Anything not claimed before its deadline can be recovered
-          here.
-        </p>
-      </header>
-      <BalanceList role="sender" />
-      <HowItWorks steps={STEPS} />
+    <div className="view">
+      <PageTop
+        avatar={
+          <span className="row-avatar tone-blue mini">
+            <HistoryIcon width={16} height={16} />
+          </span>
+        }
+        title="Sent"
+      />
+      <div className="view-scroll">
+        <div className="page stack">
+          <p className="intro">
+            <strong>Payments you sent.</strong> Nothing gets lost: anything not claimed before its deadline can be
+            recovered here.
+          </p>
+          <BalanceList role="sender" />
+          <HowItWorks steps={STEPS} />
+        </div>
+      </div>
     </div>
   );
 }

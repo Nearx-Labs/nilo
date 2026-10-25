@@ -1,5 +1,7 @@
 import { BalanceList } from "../components/Balances";
 import { HowItWorks } from "../components/HowItWorks";
+import { InboxIcon } from "../components/icons";
+import { PageTop } from "../components/Layout";
 
 const STEPS = [
   { title: "Someone sends you a payment", text: "The transaction is detected on the network." },
@@ -9,19 +11,25 @@ const STEPS = [
 
 export function ClaimPage() {
   return (
-    <div className="stack page-wide">
-      <header className="page-head">
-        <span className="eyebrow">Claim</span>
-        <h1>
-          Payments waiting for <span className="accent-word">you</span>
-        </h1>
-        <p className="muted">
-          <strong className="lead">Claim before the deadline.</strong> If your account can't hold the asset yet, the
-          same transaction adds the trustline first.
-        </p>
-      </header>
-      <BalanceList role="recipient" />
-      <HowItWorks steps={STEPS} />
+    <div className="view">
+      <PageTop
+        avatar={
+          <span className="row-avatar tone-green mini">
+            <InboxIcon width={16} height={16} />
+          </span>
+        }
+        title="Claim"
+      />
+      <div className="view-scroll">
+        <div className="page stack">
+          <p className="intro">
+            <strong>Payments waiting for you.</strong> Claim before the deadline. If your account can't hold the asset
+            yet, the same transaction adds the trustline first.
+          </p>
+          <BalanceList role="recipient" />
+          <HowItWorks steps={STEPS} />
+        </div>
+      </div>
     </div>
   );
 }
