@@ -36,6 +36,38 @@ export async function requestSponsoredClaim(balanceId: string, claimant: string)
   return body.xdr;
 }
 
+/**
+ * Asks the server for a trustline the app's sponsor pays for (fee and reserve),
+ * already signed by the sponsor. Null when the account already holds every app asset.
+ */
+export async function requestSponsoredTrustline(account: string): Promise<string | null> {
+  const res = await fetch("/api/sponsor-trustline", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ account }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || (body.xdr !== null && typeof body.xdr !== "string")) throw new Error(body.message ?? `Sponsor unavailable (${res.status}).`);
+  return body.xdr;
+}
+
+/**
+ * Asks the server for test USDC from the Sozu Faucet. The server rate-limits it;
+ * a refusal throws with the reason and, when known, `retryAt` (unix ms).
+ */
+export async function requestFaucet(address: string): Promise<string> {
+  const res = await fetch("/api/faucet", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ address }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw Object.assign(new Error(body.message ?? `Faucet unavailable (${res.status}).`), { retryAt: body.retryAt as number | undefined });
+  }
+  return String(body.amount || "100");
+}
+
 export const asSnapshot = (a: Horizon.AccountResponse) => a as unknown as AccountSnapshot;
 
 export const explorerTx = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;

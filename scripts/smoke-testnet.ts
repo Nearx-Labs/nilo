@@ -19,7 +19,7 @@ const env = Object.fromEntries(
 const alice = Keypair.fromSecret(env.ALICE_SECRET);
 const maria = Keypair.fromSecret(env.MARIA_SECRET);
 const server = new Horizon.Server(config.horizonUrl);
-const testusd = config.assets.find((a) => a.code === "TESTUSD")!;
+const usdc = config.assets.find((a) => a.code === "USDC")!;
 
 async function signAndSubmit(xdr: string, kp: Keypair) {
   const e = explain(xdr, config);
@@ -33,7 +33,7 @@ async function signAndSubmit(xdr: string, kp: Keypair) {
 
 async function send(recipient: string, deadlineSeconds: number) {
   const account = await server.loadAccount(alice.publicKey());
-  const v = validateIntent({ amount: "5", asset: "TESTUSD", recipient, deadlineSeconds }, account as any, config);
+  const v = validateIntent({ amount: "5", asset: "USDC", recipient, deadlineSeconds }, account as any, config);
   if (!v.ok) throw new Error(v.reason);
   const built = buildSendTx(v.intent, account, config);
   const m = mismatches(explain(built.xdr, config), v.intent, alice.publicKey(), built.deadline);
@@ -44,8 +44,8 @@ async function send(recipient: string, deadlineSeconds: number) {
 
 async function claim(kp: Keypair, balanceId: string) {
   const account = await server.loadAccount(kp.publicKey());
-  const needsTrust = !hasTrustline(account as any, testusd);
-  await signAndSubmit(buildClaimTx(balanceId, account, config, needsTrust ? testusd : undefined), kp);
+  const needsTrust = !hasTrustline(account as any, usdc);
+  await signAndSubmit(buildClaimTx(balanceId, account, config, needsTrust ? usdc : undefined), kp);
 }
 
 console.log("1) Alice → maria, 60s");

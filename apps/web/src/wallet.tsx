@@ -1,9 +1,11 @@
 // Wallet access through Pollar: login (Freighter, Albedo, email, Google…) and
 // signing. The app only ever reads the public address; Pollar or the user's
 // wallet holds the keys.
+import { explain } from "@nilo/core";
 import { type SubmitOutcome } from "@pollar/core";
-import { usePollar } from "@pollar/react";
-import { useMemo } from "react";
+import { usePollar, walletNotReadyReason } from "@pollar/react";
+import { useEffect, useMemo, useRef } from "react";
+import { config, requestSponsoredTrustline } from "./stellar";
 
 export class UserCancelled extends Error {}
 
@@ -56,11 +58,17 @@ export function useWallet() {
         ? "Passkey smart wallets (C… addresses) can't create or claim claimable balances. Sign in with email, Google or a Stellar wallet."
         : isAuthenticated && !stellar
           ? "Your Pollar session has no Stellar wallet."
-          : null;
+          : stellar?.provisioning === "FAILED"
+            ? "Pollar could not create your account on testnet. Sign out and sign in again to retry."
+            : null;
     const address = WATCH ?? (error ? null : (stellar?.address ?? null));
     return {
       address,
       custody: stellar?.custody ?? null,
+      /** Pollar creates new accounts in the background: CREATING until it is on the ledger. */
+      provisioning: stellar?.provisioning ?? null,
+      /** Why on-chain actions must wait (the account is still being created), or null. */
+      notReady: WATCH ? null : walletNotReadyReason(stellar, "STELLAR"),
       error,
       connect: openLoginModal,
       async signAndSubmit(xdr: string): Promise<string> {
@@ -70,4 +78,32 @@ export function useWallet() {
       setTrustline,
     };
   }, [wallets, isAuthenticated, openLoginModal, signAndSubmitTx, setTrustline]);
+}
+
+/**
+ * Pollar creates the account of a new embedded wallet (email, Google…) but never
+ * its trustlines. Once the account is on the ledger, Nilo's sponsor adds the ones
+ * for the app's assets, paying the fee and reserve; the user only signs.
+ * External wallets are skipped: they would get a signature prompt nobody asked for.
+ */
+export function useAutoTrustline() {
+  const { address, custody, provisioning, signAndSubmit } = useWallet();
+  const tried = useRef(new Set<string>());
+  useEffect(() => {
+    if (WATCH || !config.sponsor || !address || custody !== "internal") return;
+    if (provisioning && provisioning !== "READY") return;
+    if (tried.current.has(address)) return;
+    tried.current.add(address);
+    (async () => {
+      const xdr = await requestSponsoredTrustline(address);
+      if (!xdr) return;
+      const e = explain(xdr, config);
+      if (e.kind !== "trustline" || e.fields.account !== address) throw new Error(`refusing to sign: ${e.lines[0]}`);
+      await signAndSubmit(xdr);
+    })().catch((e) => {
+      // Not fatal: a sponsored claim adds the trustline too. Retry when the wallet state changes.
+      tried.current.delete(address);
+      console.warn("Could not add the trustline:", (e as Error).message ?? e);
+    });
+  }, [address, custody, provisioning, signAndSubmit]);
 }

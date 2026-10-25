@@ -32,7 +32,7 @@ type ExtractResponse =
   | { status: "needs_clarification"; question: string }
   | { status: "error"; message: string };
 
-const EXAMPLE = "Send 50 TESTUSD to maria, she has 2 minutes";
+const EXAMPLE = "Send 50 USDC to maria, she has 2 minutes";
 /** Pixels from the bottom that still count as "following" the conversation. */
 const STICK_PX = 80;
 
@@ -65,12 +65,15 @@ async function validateFresh(intent: SendIntent, address: string): Promise<Resol
   const account = await loadAccount(address);
   if (!account) throw new Error("Your account is not on testnet yet. If you just signed in, wait a few seconds; otherwise fund it with Friendbot (Claim page).");
   const v = validateIntent(intent, asSnapshot(account), config);
-  if (!v.ok) throw new Error(v.reason);
+  if (!v.ok) {
+    const lowUsdc = /^(Your account holds no|Insufficient) USDC\b/.test(v.reason);
+    throw new Error(lowUsdc ? `${v.reason} Get free test USDC on the Claim page.` : v.reason);
+  }
   return v.intent;
 }
 
 export function ChatPage({ bot }: { bot: Bot }) {
-  const { address, connect, error: walletError } = useWallet();
+  const { address, connect, error: walletError, notReady } = useWallet();
   const { saveChat, deleteBot } = useBots();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadSettled(bot.id));
   const [draft, setDraft] = useState("");
@@ -153,6 +156,10 @@ export function ChatPage({ bot }: { bot: Bot }) {
       connect();
       return;
     }
+    if (notReady) {
+      say(notReady);
+      return;
+    }
     try {
       const account = await loadAccount(address);
       if (!account) {
@@ -173,6 +180,10 @@ export function ChatPage({ bot }: { bot: Bot }) {
     if (!from) {
       say(walletError ?? "Sign in first (the button at the bottom of the sidebar), then try again.");
       connect();
+      return;
+    }
+    if (notReady) {
+      say(notReady);
       return;
     }
     try {

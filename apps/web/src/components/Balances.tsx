@@ -10,7 +10,7 @@ import {
   viewBalance,
 } from "@nilo/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { asSnapshot, config, friendbot, horizon, loadAccount, requestSponsoredClaim } from "../stellar";
+import { asSnapshot, config, friendbot, horizon, loadAccount, requestFaucet, requestSponsoredClaim } from "../stellar";
 import { formatLocal, formatRelative, short, useNow } from "../time";
 import { useWallet } from "../wallet";
 import { EmptyWallet } from "./EmptyWallet";
@@ -21,6 +21,8 @@ import { type Prepared, SignPanel } from "./SignPanel";
 const CLOCK_MARGIN = 5;
 /** How often the list reloads from Horizon on its own, so new payments show up without a click. */
 const POLL_MS = 15_000;
+/** The faucet is offered below this USDC balance (the server refuses at or above it). */
+const FAUCET_BELOW = "50";
 
 export function useBalances(address: string | null) {
   const [records, setRecords] = useState<HorizonClaimableBalance[]>([]);
@@ -93,6 +95,7 @@ export function BalanceList({ role }: { role: BalanceView["role"] }) {
       </div>
       {error && <p className="error">{error}</p>}
       <AccountCheck address={address} funding={funding} setFunding={setFunding} onFunded={refresh} />
+      {role === "recipient" && <FaucetCard address={address} />}
       {message && <p className="success">{message}</p>}
       {views.length === 0 && !(loading && records.length === 0) && (
         <div className="panel empty">
@@ -233,11 +236,13 @@ function BalanceRow(props: {
 
 /** Explains (and on testnet fixes) a wallet that is not on the ledger yet. */
 function AccountCheck(props: { address: string; funding: boolean; setFunding: (b: boolean) => void; onFunded: () => void }) {
+  const { notReady } = useWallet();
   const [missing, setMissing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     loadAccount(props.address).then((a) => setMissing(!a), () => setMissing(false));
-  }, [props.address]);
+  }, [props.address, notReady]);
+  if (notReady) return <div className="warning">{notReady}</div>;
   if (!missing) return null;
   return (
     <div className="warning">
@@ -263,6 +268,61 @@ function AccountCheck(props: { address: string; funding: boolean; setFunding: (b
         {props.funding ? "Funding…" : "Fund with Friendbot"}
       </button>
       {err && <span className="error"> {err}</span>}
+    </div>
+  );
+}
+
+/**
+ * Free test USDC (Circle's, from the Sozu Faucet) for an account that can hold
+ * it and has little. Goes through Nilo's server, which rate-limits the faucet.
+ */
+function FaucetCard({ address }: { address: string }) {
+  const usdc = config.assets.find((a) => a.code === "USDC" && a.issuer);
+  const [low, setLow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const check = useCallback(async () => {
+    if (!usdc) return;
+    const account = await loadAccount(address).catch(() => null);
+    const line = account?.balances.find((b) => "asset_code" in b && b.asset_code === usdc.code && b.asset_issuer === usdc.issuer);
+    // No trustline yet: Nilo adds it for new wallets, so check again on the next poll.
+    setLow(!!line && toStroops(line.balance) < toStroops(FAUCET_BELOW));
+  }, [address, usdc]);
+  useEffect(() => {
+    setResult(null);
+    check();
+    const id = setInterval(check, POLL_MS);
+    return () => clearInterval(id);
+  }, [check]);
+  if (!low && !result) return null;
+  return (
+    <div className="panel">
+      {low && (
+        <div className="row">
+          <span>Need test USDC to try sending?</span>
+          <button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setResult(null);
+              try {
+                const amount = await requestFaucet(address);
+                setResult({ ok: true, text: `Got ${amount} test USDC.` });
+              } catch (e) {
+                const retryAt = (e as { retryAt?: number }).retryAt;
+                const when = retryAt ? ` Try again after ${formatLocal(Math.ceil(retryAt / 1000))}.` : "";
+                setResult({ ok: false, text: (e as Error).message + when });
+              } finally {
+                setBusy(false);
+                check();
+              }
+            }}
+          >
+            {busy ? "Getting USDC…" : "Get 100 test USDC"}
+          </button>
+        </div>
+      )}
+      {result && <p className={result.ok ? "success" : "error"}>{result.text}</p>}
     </div>
   );
 }

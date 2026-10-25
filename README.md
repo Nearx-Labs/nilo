@@ -1,6 +1,6 @@
 # Nilo
 
-**Stellar payments that can't get lost.** Type "send 50 TESTUSD to maria, she has 2 minutes" and Nilo sends it as a
+**Stellar payments that can't get lost.** Type "send 50 USDC to maria, she has 2 minutes" and Nilo sends it as a
 claimable balance. Maria can claim it before the deadline. After the deadline, only you can take it back. If you
 typed the wrong address, the money comes home.
 
@@ -38,15 +38,15 @@ Nilo addresses both halves with Stellar's own primitives:
 
 ## How a payment flows
 
-1. **You write** "send 50 TESTUSD to maria, she has 2 minutes".
+1. **You write** "send 50 USDC to maria, she has 2 minutes".
 2. **The chat agent (LLM)** turns the sentence into four fields:
-   `{amount: "50", asset: "TESTUSD", recipient: "maria", deadlineSeconds: 120}`. If a field is missing or
+   `{amount: "50", asset: "USDC", recipient: "maria", deadlineSeconds: 120}`. If a field is missing or
    ambiguous, it asks instead of guessing.
 3. **Nilo validates** the intent with deterministic code: address, allowed asset, at most 7 decimals, and a balance
    that covers the amount plus the 1 XLM reserve.
 4. **Nilo builds** a `createClaimableBalance` transaction (XDR).
 5. **Nilo explains** it: the XDR is decoded into a fixed-template sentence and checked against what you asked for.
-   You read, for example: "Sends 50 TESTUSD to GBYY…O2ZK (maria). Claimable until 13:26 UTC, then only you can
+   You read, for example: "Sends 50 USDC to GBYY…O2ZK (maria). Claimable until 13:26 UTC, then only you can
    recover it."
 6. **You sign** in your wallet (via Pollar), and the wallet submits the transaction to Stellar testnet.
 
@@ -90,7 +90,7 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 | Nilo never holds your funds or keys | Signing happens in the user's wallet: Freighter or Albedo, or a Pollar email/Google wallet. The app only knows users' public addresses. |
 | The sponsor only signs what it built | The server rebuilds each sponsored claim from the balance ID, checks on Horizon that you are the recipient and the deadline hasn't passed, then signs. It never signs XDR sent by the browser, and the explainer accepts the sponsored shape only from Nilo's own sponsor account. |
 
-This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every line comes from the transaction bytes:
+This is what you read before signing "50 USDC to maria, 2 minutes". Every line comes from the transaction bytes:
 
 ![The explanation card decoded from the XDR, with the Sign and send button](docs/screenshots/review.webp)
 
@@ -117,8 +117,9 @@ This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every lin
 3. In the Pollar dashboard, add `http://localhost:5173` as an allowed origin and redirect URI, and make sure the app
    has credits for wallet creation.
 
-4. Create TESTUSD, the demo accounts and the sponsor account. The demo secrets are written to `.env.demo`, and
-   `SPONSOR_SECRET` to both `.env` and `.env.demo`:
+4. Create the demo accounts and the sponsor account, and give alice Circle's testnet USDC from the
+   [Sozu Faucet](https://faucet.sozu.capital). The demo secrets are written to `.env.demo`, and `SPONSOR_SECRET`
+   to both `.env` and `.env.demo`:
 
    ```bash
    npm run setup:testnet
@@ -128,6 +129,12 @@ This is what you read before signing "50 TESTUSD to maria, 2 minutes". Every lin
 
    ```bash
    npm run setup:sponsor
+   ```
+
+   Set up when the demo still used TESTUSD? Give alice a USDC trustline and 100 USDC from the faucet:
+
+   ```bash
+   npm run setup:usdc
    ```
 
 5. Check the core, then start everything:
@@ -143,7 +150,7 @@ The demo uses the nicknames `alice` (sender), `maria` (recipient) and `bob`, all
 
 | Step | What to do | What you should see |
 |---|---|---|
-| 1. Send | On **Chat**, type "send 50 TESTUSD to maria, she has 2 minutes" (or click **Send a payment** to fill it in). | An explanation card naming Maria's address and the deadline. |
+| 1. Send | On **Chat**, type "send 50 USDC to maria, she has 2 minutes" (or click **Send a payment** to fill it in). | An explanation card naming Maria's address and the deadline. |
 | 2. Sign | Sign with your wallet. | The payment shows up as pending on **Sent**. |
 | 3. Claim | As the recipient, open **Claim** before the deadline. | The explanation says Nilo's sponsor pays the fee and the trustline reserve. The balance is claimed and Maria's XLM is unchanged. |
 | 4. Recover | Send to an address nobody controls, wait for the deadline, open **Sent**. | A **Recover** action that returns the funds to you. |
@@ -163,7 +170,8 @@ Helper scripts:
 | `npx tsx scripts/smoke-testnet.ts` | End-to-end check against testnet without a wallet: send → claim with trustline, then send to a stranger → wait → recover. Needs `.env.demo`. |
 | `npx tsx --env-file=.env scripts/smoke-sponsored.ts` | End-to-end check of a sponsored claim: maria (no trustline) claims while her XLM stays the same, and the server refuses a stranger and the sender. Needs `SPONSOR_SECRET`. |
 | `npm run setup:sponsor` | Creates (or replaces) the sponsor account and writes `SPONSOR_SECRET`. |
-| `npm run demo:reset-maria` | Resets the recipient account between takes. |
+| `npm run setup:usdc` | Adds alice's USDC trustline if missing and claims 100 USDC from the Sozu Faucet (it has its own cooldown). |
+| `npm run demo:reset-maria` | Resets the recipient account between takes: her USDC goes back to alice and her trustline is removed. |
 
 <details>
 <summary>On a phone</summary>
@@ -177,13 +185,13 @@ Helper scripts:
 | Path | What it does |
 |---|---|
 | [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation. All the tests live here. |
-| [`apps/server`](apps/server) | Two endpoints. `POST /api/extract`: chat messages in, structured intent (or a clarifying question) out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. |
+| [`apps/server`](apps/server) | Four endpoints. `POST /api/extract`: chat messages in, structured intent (or a clarifying question) out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. `POST /api/sponsor-trustline`: a new wallet's address in, a USDC trustline signed by the sponsor out (the reserve is the sponsor's). `POST /api/faucet`: an address in, 100 test USDC from the Sozu Faucet, rate-limited per account (1/day), per IP (3/day), per server (20/hour), one at a time, and paused while Sozu says it is out or cooling down. |
 | [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
 | [`scripts/`](scripts) | Testnet and sponsor setup, the wallet-free smoke tests, and the demo reset. |
 
 ## Limits of v1
 
-- Testnet only. The allowed assets are XLM and a self-issued TESTUSD.
+- Testnet only. The allowed assets are XLM and Circle's testnet USDC (`GBBD47…LFLA5`).
 - Recipients are a full `G…` address or a nickname from a fixed demo list (`alice`, `maria`, `bob`).
 - The recipient needs an existing Stellar account. It doesn't need spare XLM: Nilo sponsors the fee and the
   trustline reserve. Sponsoring account creation (`createAccount` with a 0 starting balance) is not done yet.

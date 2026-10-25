@@ -15,7 +15,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { CreateBotModal } from "../bots/CreateBotModal";
 import { DEFAULT_BOT, DEFAULT_PREVIEW, useBots } from "../bots/store";
 import { StroopyAvatar } from "../bots/StroopyAvatar";
-import { useWallet } from "../wallet";
+import { useAutoTrustline, useWallet } from "../wallet";
 import { HistoryIcon, InboxIcon, MenuIcon, PlusIcon, SearchIcon, SendIcon, UserIcon, WalletIcon } from "./icons";
 
 /** Chat actions the chat page runs when it is opened with this router state. */
@@ -64,6 +64,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const sidebar = useRef<HTMLElement>(null);
   const wasOpen = useRef(false);
   const { pathname } = useLocation();
+  useAutoTrustline();
 
   useEffect(() => setDrawerOpen(false), [pathname]);
   // Move focus into the drawer when it opens, and back to the menu button when it closes.

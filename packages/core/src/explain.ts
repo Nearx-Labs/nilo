@@ -1,7 +1,7 @@
 // Turns a transaction XDR into plain English using fixed templates.
 // It reads only the XDR: no LLM, no intent, no chain data. Anything that does
 // not match one of the exact shapes this app builds is reported as unrecognized.
-import { type Asset, FeeBumpTransaction, TransactionBuilder } from "@stellar/stellar-sdk";
+import { type Asset, FeeBumpTransaction, type Transaction, TransactionBuilder } from "@stellar/stellar-sdk";
 import {
   type AppConfig,
   type AssetSpec,
@@ -41,9 +41,20 @@ export interface ClaimFields {
   validUntil?: number;
 }
 
+export interface TrustlineFields {
+  /** Transaction source: the app's sponsor, which pays the fee and the reserve. */
+  source: string;
+  /** Account that gets the trustline. */
+  account: string;
+  asset: AssetSpec;
+  fee: string;
+  validUntil?: number;
+}
+
 export type Explanation =
   | { kind: "send"; fields: SendFields; lines: string[] }
   | { kind: "claim"; fields: ClaimFields; lines: string[] }
+  | { kind: "trustline"; fields: TrustlineFields; lines: string[] }
   | { kind: "unrecognized"; reason: string; lines: string[] };
 
 function spec(asset: Asset): AssetSpec {
@@ -64,6 +75,26 @@ function unrecognized(reason: string): Explanation {
       "Do not sign it.",
     ],
   };
+}
+
+type Op = Transaction["operations"][number];
+
+/**
+ * Checks [beginSponsoringFutureReserves, changeTrust, endSponsoringFutureReserves]
+ * where `sponsor` pays the reserve of a new trustline on `account`.
+ * Returns the asset, or the reason the shape is wrong.
+ */
+function sponsoredTrust(ops: Op[], sponsor: string, account: string): AssetSpec | string {
+  const [begin, trust, end] = ops;
+  if (begin.type !== "beginSponsoringFutureReserves" || trust.type !== "changeTrust" || end.type !== "endSponsoringFutureReserves") {
+    return `unexpected sponsored operations: ${ops.map((o) => o.type).join(", ")}.`;
+  }
+  if (begin.source && begin.source !== sponsor) return "the reserve sponsor is not the paying account.";
+  if (begin.sponsoredId !== account) return "the sponsored account is not the one signing.";
+  if (trust.source !== account || end.source !== account) return "the trustline is not added to the sponsored account.";
+  if (!("getCode" in trust.line)) return "the trustline is for a liquidity pool share.";
+  if (trust.limit !== MAX_TRUST_LIMIT) return `the trustline sets a limit of ${trust.limit}.`;
+  return spec(trust.line as Asset);
 }
 
 export function explain(xdrBase64: string, config: AppConfig): Explanation {
@@ -137,6 +168,24 @@ export function explain(xdrBase64: string, config: AppConfig): Explanation {
   }
 
   const claimOp = ops[ops.length - 1];
+  if (sponsored && ops.length === 3 && claimOp.type === "endSponsoringFutureReserves") {
+    const account = claimOp.source;
+    if (!account || account === tx.source) return unrecognized("the sponsor account adds a trustline to itself.");
+    const asset = sponsoredTrust(ops, tx.source, account);
+    if (typeof asset === "string") return unrecognized(asset);
+    if (!config.assets.some((a) => a.code === asset.code && a.issuer === asset.issuer)) {
+      return unrecognized(`${assetLabel(asset)} is not an asset this app uses.`);
+    }
+    return {
+      kind: "trustline",
+      fields: { source: tx.source, account, asset, fee, validUntil },
+      lines: [
+        `Adds a trustline so your account ${account} can hold ${assetLabel(asset)}.`,
+        `Nilo's sponsor account ${tx.source} pays the network fee and the 0.5 XLM trustline reserve. Your XLM balance does not change.`,
+        ...footer,
+      ],
+    };
+  }
   if (sponsored) {
     if (claimOp.type !== "claimClaimableBalance" || !claimOp.source || claimOp.source === tx.source) {
       return unrecognized("the sponsor account is the source but this is not a claim by someone else.");
@@ -144,18 +193,9 @@ export function explain(xdrBase64: string, config: AppConfig): Explanation {
     const claimant = claimOp.source;
     let trustline: AssetSpec | undefined;
     if (ops.length === 4) {
-      const [begin, trust, end] = ops;
-      if (begin.type !== "beginSponsoringFutureReserves" || trust.type !== "changeTrust" || end.type !== "endSponsoringFutureReserves") {
-        return unrecognized(`unexpected sponsored operations: ${ops.map((o) => o.type).join(", ")}.`);
-      }
-      if (begin.source && begin.source !== tx.source) return unrecognized("the reserve sponsor is not the paying account.");
-      if (begin.sponsoredId !== claimant) return unrecognized("the sponsored account is not the one claiming.");
-      if (trust.source !== claimant || end.source !== claimant) {
-        return unrecognized("the trustline is not added to the account claiming.");
-      }
-      if (!("getCode" in trust.line)) return unrecognized("the trustline is for a liquidity pool share.");
-      if (trust.limit !== MAX_TRUST_LIMIT) return unrecognized(`the trustline sets a limit of ${trust.limit}.`);
-      trustline = spec(trust.line as Asset);
+      const t = sponsoredTrust(ops, tx.source, claimant);
+      if (typeof t === "string") return unrecognized(t);
+      trustline = t;
     } else if (ops.length !== 1) {
       return unrecognized(`unexpected sponsored operations: ${ops.map((o) => o.type).join(", ")}.`);
     }

@@ -1,8 +1,10 @@
 import { serve } from "@hono/node-server";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import OpenAI from "openai";
 import { Hono } from "hono";
 import { ChatSchema, extractIntent } from "./extract";
-import { SponsorError, SponsorRequest, sponsorClaim } from "./sponsor";
+import { FaucetError, FaucetRequest, requestFaucet } from "./faucet";
+import { SponsorError, SponsorRequest, TrustlineRequest, sponsorClaim, sponsorTrustline } from "./sponsor";
 
 const app = new Hono();
 
@@ -33,6 +35,33 @@ app.post("/api/sponsor-claim", async (c) => {
     if (e instanceof SponsorError) return c.json({ message: e.message }, e.status);
     console.error("sponsor-claim failed:", e);
     return c.json({ message: "Could not prepare a sponsored claim right now." }, 502);
+  }
+});
+
+app.post("/api/sponsor-trustline", async (c) => {
+  const parsed = TrustlineRequest.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ message: "Invalid address." }, 400);
+  try {
+    return c.json(await sponsorTrustline(parsed.data));
+  } catch (e) {
+    if (e instanceof SponsorError) return c.json({ message: e.message }, e.status);
+    console.error("sponsor-trustline failed:", e);
+    return c.json({ message: "Could not prepare a sponsored trustline right now." }, 502);
+  }
+});
+
+app.post("/api/faucet", async (c) => {
+  const parsed = FaucetRequest.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ message: "Invalid address." }, 400);
+  // Behind a reverse proxy every request comes from the proxy: set TRUST_PROXY=1 to use X-Forwarded-For.
+  const forwarded = process.env.TRUST_PROXY === "1" ? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() : undefined;
+  const ip = forwarded || getConnInfo(c).remote.address || "unknown";
+  try {
+    return c.json(await requestFaucet(parsed.data, ip));
+  } catch (e) {
+    if (e instanceof FaucetError) return c.json({ message: e.message, retryAt: e.retryAt }, e.status);
+    console.error("faucet failed:", e);
+    return c.json({ message: "Could not reach the test USDC faucet right now." }, 502);
   }
 });
 

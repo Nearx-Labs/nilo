@@ -12,7 +12,7 @@ const SYSTEM = `You extract a payment request from a chat. You never build, sign
 
 The user wants to send an amount of an asset to someone, who has a limited time to claim it. Fill:
 - amount: the number exactly as written, as a decimal string with "." as separator (e.g. "50", "12.5"). Never round or convert.
-- asset: the asset code the user named, uppercased (e.g. "TESTUSD", "XLM").
+- asset: the asset code the user named, uppercased (e.g. "USDC", "XLM").
 - recipient: exactly what the user wrote to identify the recipient: either a nickname (e.g. "maria") or a full Stellar address starting with G. Copy addresses character by character. Never complete, fix or invent an address.
 - deadlineSeconds: how long the recipient has to claim, converted to whole seconds (e.g. "2 minutes" -> 120, "1 hour" -> 3600, "2 dias" -> 172800).
 

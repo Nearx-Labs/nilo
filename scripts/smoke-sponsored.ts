@@ -16,9 +16,9 @@ const xlm = (a: Horizon.AccountResponse) => a.balances.find((b) => b.asset_type 
 
 await import("./reset-maria.ts");
 
-console.log("1) Alice → maria, 5 TESTUSD, 120s");
+console.log("1) Alice → maria, 5 USDC, 120s");
 const aliceAcc = await server.loadAccount(alice.publicKey());
-const v = validateIntent({ amount: "5", asset: "TESTUSD", recipient: "maria", deadlineSeconds: 120 }, aliceAcc as any, config);
+const v = validateIntent({ amount: "5", asset: "USDC", recipient: "maria", deadlineSeconds: 120 }, aliceAcc as any, config);
 if (!v.ok) throw new Error(v.reason);
 const sent = buildSendTx(v.intent, aliceAcc, config);
 const sendTx = TransactionBuilder.fromXDR(sent.xdr, config.networkPassphrase);
@@ -44,8 +44,8 @@ tx.sign(maria);
 console.log("  submitted", (await server.submitTransaction(tx)).hash);
 
 const after = await server.loadAccount(maria.publicKey());
-const line = after.balances.find((b) => "asset_code" in b && b.asset_code === "TESTUSD");
+const line = after.balances.find((b) => "asset_code" in b && b.asset_code === "USDC");
 console.log("  maria XLM before/after:", xlm(before), "/", xlm(after));
-console.log("  maria TESTUSD:", line?.balance, " num_sponsored:", (after as any).num_sponsored);
+console.log("  maria USDC:", line?.balance, " num_sponsored:", (after as any).num_sponsored);
 if (xlm(before) !== xlm(after)) throw new Error("maria's XLM changed");
 console.log("OK");
