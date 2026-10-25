@@ -9,7 +9,7 @@ itself, not written by the AI.
 
 > HackMeridian 2026 · Stellar Unlocked track · **testnet only**
 
-![Nilo home: chat with quick actions for sending, checking the balance, claiming and recovering](docs/screenshots/home.webp)
+![Nilo home: chat with quick actions to send, check the balance, claim, track sent payments, check a price and send in reais](docs/screenshots/home.webp)
 
 ## Contents
 
@@ -91,9 +91,10 @@ Deadlines run from 60 seconds to 30 days. A built transaction stays valid for 18
 | Nilo never holds your funds or keys | Signing happens in the user's wallet: Freighter or Albedo, or a Pollar email/Google wallet. The app only knows users' public addresses. |
 | The sponsor only signs what it built | The server rebuilds each sponsored claim from the balance ID, checks on Horizon that you are the recipient and the deadline hasn't passed, then signs. It never signs XDR sent by the browser, and the explainer accepts the sponsored shape only from Nilo's own sponsor account. |
 
-This is what you read before signing "50 USDC to maria, 2 minutes". Every line comes from the transaction bytes:
+This is what you read before signing "50 USDC to maria, 2 minutes". Every line comes from the transaction bytes;
+the "≈ US$" value above it comes from the oracle and is not part of the transaction:
 
-![The explanation card decoded from the XDR, with the Sign and send button](docs/screenshots/review.webp)
+![The payment form, the oracle value and the explanation card decoded from the XDR, with the Sign and send button](docs/screenshots/review.webp)
 
 ## Prices from Reflector
 
@@ -181,11 +182,12 @@ The demo uses the nicknames `alice` (sender), `maria` (recipient) and `bob`, all
 
 The **Claim** page, as the recipient sees it. It refreshes on its own, so a new payment shows up without a reload:
 
-![Claim page: payments waiting for the recipient, an empty state and how claiming works](docs/screenshots/claim.webp)
+![Claim page: a 10 USDC payment from alice the recipient can claim, and how claiming works](docs/screenshots/claim.webp)
 
-The **Sent** page, as the sender sees it. Once a deadline passes unclaimed, the payment turns recoverable:
+The **Sent** page, as the sender sees it. A payment waits for the recipient until its deadline; once the deadline
+passes unclaimed, it turns recoverable:
 
-![Sent page: a payment nobody claimed before its deadline, with the Recover button](docs/screenshots/sent.webp)
+![Sent page: one payment waiting for the recipient and one nobody claimed before its deadline, with the Recover button](docs/screenshots/sent.webp)
 
 Helper scripts:
 
