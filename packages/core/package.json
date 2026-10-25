@@ -1,5 +1,5 @@
 {
-  "name": "@stellar-dots/core",
+  "name": "@nilo/core",
   "private": true,
   "type": "module",
   "main": "src/index.ts",

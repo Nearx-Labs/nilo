@@ -14,7 +14,7 @@ function Header() {
   return (
     <header className="top">
       <div className="brand">
-        <span className="logo">●●</span> stellar-dots <span className="net">testnet</span>
+        <span className="logo">●●</span> Nilo <span className="net">testnet</span>
       </div>
       <nav>
         <NavLink to="/send">Send</NavLink>

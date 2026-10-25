@@ -67,7 +67,7 @@ export interface BalanceView {
   role: "recipient" | "sender";
   sender?: string;
   recipient?: string;
-  /** Unix seconds, when the balance follows the stellar-dots two-claimant shape. */
+  /** Unix seconds, when the balance follows the Nilo two-claimant shape. */
   deadline?: number;
   status: BalanceStatus;
   claimableNow: boolean;

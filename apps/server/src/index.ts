@@ -28,4 +28,4 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const port = Number(process.env.PORT ?? 8787);
-serve({ fetch: app.fetch, port }, () => console.log(`stellar-dots server on http://localhost:${port}`));
+serve({ fetch: app.fetch, port }, () => console.log(`Nilo server on http://localhost:${port}`));

@@ -7,7 +7,7 @@ import {
   hasTrustline,
   toStroops,
   viewBalance,
-} from "@stellar-dots/core";
+} from "@nilo/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { asSnapshot, config, friendbot, horizon, loadAccount } from "../stellar";
 import { formatLocal, formatRelative, short, useNow } from "../time";

@@ -1,4 +1,4 @@
-import { explain, type Explanation } from "@stellar-dots/core";
+import { explain, type Explanation } from "@nilo/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { config, explorerTx } from "../stellar";
 import { UserCancelled, isSubmitFailure, useWallet } from "../wallet";

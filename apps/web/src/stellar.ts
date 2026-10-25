@@ -1,5 +1,5 @@
 // Read-only Horizon access. Signing goes through Pollar (see wallet.tsx).
-import { defaultConfig as config, type AccountSnapshot } from "@stellar-dots/core";
+import { defaultConfig as config, type AccountSnapshot } from "@nilo/core";
 import { Horizon } from "@stellar/stellar-sdk";
 
 export { config };

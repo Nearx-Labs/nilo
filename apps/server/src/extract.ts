@@ -3,7 +3,7 @@
 // and is validated again by the core before anything is built.
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
-import { SendIntentSchema, type SendIntent } from "@stellar-dots/core";
+import { SendIntentSchema, type SendIntent } from "@nilo/core";
 import { z } from "zod";
 
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.4-mini";

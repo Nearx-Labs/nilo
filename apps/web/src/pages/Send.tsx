@@ -4,7 +4,7 @@ import {
   buildSendTx,
   mismatches,
   validateIntent,
-} from "@stellar-dots/core";
+} from "@nilo/core";
 import { type FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { type Prepared, SignPanel } from "../components/SignPanel";

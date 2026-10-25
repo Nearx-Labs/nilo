@@ -1,4 +1,4 @@
-import type { Explanation } from "@stellar-dots/core";
+import type { Explanation } from "@nilo/core";
 import { formatLocal, formatRelative, useNow } from "../time";
 
 /** Renders the template explanation. Text here comes from the XDR, never from the AI. */
