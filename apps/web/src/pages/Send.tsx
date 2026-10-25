@@ -153,7 +153,7 @@ async function approxValue(amount: string, assetCode: string): Promise<string | 
   return value === null ? null : `≈ ${formatFiat(value, DISPLAY_FIAT)}`;
 }
 
-/** An amount rounded for speech ("9999.9999900" -> "10,000"); the exact one stays on screen. */
+/** An amount rounded for speech ("9999.9999900" -> "10,000"); the chat history keeps the exact one. */
 function spokenAmount(amount: string): string {
   const stroops = toStroops(amount);
   const digits = stroops >= 100n * STROOPS_PER_UNIT ? 0 : stroops >= STROOPS_PER_UNIT ? 2 : 4;
@@ -317,7 +317,6 @@ export function ChatPage({ bot }: { bot: Bot }) {
           usdcNote,
         `The user has ${rows.flatMap((r) => r.spoken ?? []).join(", and ")}.` +
           (total ? ` In total about ${total}.` : "") +
-          " The exact amounts are on screen." +
           usdcNote,
       );
     } catch (e) {
