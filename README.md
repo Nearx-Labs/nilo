@@ -1,43 +1,80 @@
 # Nilo
 
-**Stellar payments that can't get lost.** Type "send 50 USDC to maria, she has 2 minutes" and Nilo sends it as a
-claimable balance. Maria can claim it before the deadline. After the deadline, only you can take it back. If you
-typed the wrong address, the money comes home.
+**Your money works while you sleep.**
 
-Before you sign, Nilo explains the transaction in plain English. That explanation is decoded from the transaction
-itself, not written by the AI.
+[nilo-ai.xyz](https://nilo-ai.xyz) · HackMeridian 2026 · Stellar · **testnet only**
 
-> HackMeridian 2026 · Stellar Unlocked track · **testnet only**
+Nilo is an investing agent on Stellar. It learns your investor profile, suggests a plan that fits it, and keeps your
+USDC invested inside limits you signed, even when you are offline. Nilo never holds your key: you sign one mandate,
+and a Soroban contract enforces it on every move.
+
+Nilo started as a chat wallet for payments that can't get lost, and that part is still here: every payment is a
+recoverable claimable balance, and before you sign anything Nilo explains the transaction from its own bytes.
 
 ![Nilo home: chat with quick actions to send, check the balance, claim, track sent payments, check a price and send in reais](docs/screenshots/home.webp)
 
 ## Contents
 
-- [The problem](#the-problem)
-- [How a payment flows](#how-a-payment-flows)
-- [The recovery rule](#the-recovery-rule)
+- [How investing works](#how-investing-works)
+- [The mandate contract](#the-mandate-contract)
+- [Payments that can't get lost](#payments-that-cant-get-lost)
 - [Why you can trust what you sign](#why-you-can-trust-what-you-sign)
 - [Prices from Reflector](#prices-from-reflector)
 - [Quick start](#quick-start)
 - [Try the demo](#try-the-demo)
 - [Repository layout](#repository-layout)
 - [Limits of v1](#limits-of-v1)
-- [Next](#next)
 
-## The problem
+## How investing works
 
-A crypto payment is final. One wrong character in an address and the funds are gone, with nobody to call. Chat
-assistants make sending easier, which makes the risk worse: now the payment also depends on a model reading your
-sentence correctly.
+1. **Find your profile.** On first sign-in you answer a short questionnaire (time horizon, finances, market
+   knowledge and more). Each answer scores 1, 3 or 5 points, and the total places you as Conservative (up to 12),
+   Moderate (up to 22) or Aggressive (above 22). The profile is saved per wallet address in your browser.
+2. **Pick a personality.** Each profile maps to a preset, so you don't have to write your own rules:
 
-Nilo addresses both halves with Stellar's own primitives:
+   | Personality | Profile | Split | Weekly limit | Always kept in wallet |
+   |---|---|---|---|---|
+   | Guardian | Conservative | 100% XOXNO Lending on Stellar | 50 USDC | 5 USDC |
+   | Balanced | Moderate | 60% XOXNO, 40% Aave on Arbitrum via Circle CCTP | 100 USDC | 5 USDC |
+   | Explorer | Aggressive | 30% XOXNO, 70% Aave on Arbitrum via Circle CCTP | 250 USDC | 2 USDC |
 
-- **Every payment is recoverable by design.** It is a claimable balance with two claimants: the recipient before the
-  deadline, the sender after it. No smart contract, no escrow service, no custody.
-- **The AI never has the last word.** The model only turns your sentence into four fields. Everything after that is
-  deterministic code you can test, and what you read before signing comes from the signed bytes.
+   Venues the deployment can't reach yet are dropped from the mandate. On the current testnet deployment that
+   means XOXNO Lending only; the CCTP leg is wired once its destination vault is deployed.
+3. **Sign the mandate once.** On the **Agent** page you sign a mandate (weekly cap, allowed venues, expiry, 30 days
+   by default) and a USDC allowance to the NiloAgent contract that covers that period. That is the only signature
+   the agent needs.
+4. **Nilo invests while you sleep.** The server checks every wallet with a mandate on a schedule
+   (`AGENT_INTERVAL_MINUTES`, every 60 minutes by default) and splits your available USDC across the allowed venues
+   by the personality's weights, always leaving your reserve in the wallet.
+5. **Check in when you are back.** The Agent page shows what is invested, what it has earned, what is in your
+   wallet and the XOXNO rate, plus "While you were away", the log of what the agent did.
+6. **Withdraw or revoke at any time.** Withdrawals go straight to your wallet. Revoking ends the mandate and zeroes
+   the allowance; existing positions stay withdrawable.
 
-## How a payment flows
+## The mandate contract
+
+[`contracts/soroban/nilo-agent`](contracts/soroban/nilo-agent) is what makes "invest on my behalf" safe without
+custody. Testnet contract: `CC4VU642T2Z4IEGANZV4HUIEQDOWP2YONA6AFX53WUHNYGZ5VZTZQTR7`.
+
+| Rule | How the contract enforces it |
+|---|---|
+| Only you set the rules | `set_mandate` and `revoke` require your signature. |
+| The operator can only invest | Nilo's operator key can call `invest`, `withdraw` and `renew`, nothing else. |
+| Only approved venues | `invest` refuses any venue not in your mandate's bitmask (XOXNO Lending, or CCTP to Nilo's vault). |
+| Inside the caps | Each period's total is checked against your limit; going over fails with `OverLimit`. |
+| It expires | After `expires_at` the agent can no longer invest. |
+| Withdrawals only pay you | `withdraw` can be called by you or the operator, and XOXNO pays the USDC straight to your address. |
+
+Nilo's operator key (`NILO_OPERATOR_SECRET`) lives on the server only. Even if it leaked, the contract would only
+let it move your USDC into your own positions, within your caps, and back to you.
+
+## Payments that can't get lost
+
+Type "send 50 USDC to maria, she has 2 minutes" and Nilo sends it as a claimable balance. Maria can claim it before
+the deadline. After the deadline, only you can take it back. If you typed the wrong address, the money comes home.
+No smart contract, no escrow service, no custody.
+
+### How a payment flows
 
 1. **You write** "send 50 USDC to maria, she has 2 minutes".
 2. **The chat agent (LLM)** turns the sentence into four fields:
@@ -54,11 +91,9 @@ Nilo addresses both halves with Stellar's own primitives:
 The explanation step accepts only the exact shape Nilo builds. An extra operation, a third claimant, swapped
 deadlines, a memo or a recovery path to someone else all produce **"Do not sign"** instead of a best-effort summary.
 
-## The recovery rule
+### The recovery rule
 
-Each payment is one claimable balance with two time predicates that share the same instant `T`:
-
-A payment ends in one of two ways:
+Each payment is one claimable balance with two time predicates that share the same instant `T`. A payment ends in one of two ways:
 
 - **Claimed:** the recipient claims it before `T`.
 - **Recovered:** `T` passes unclaimed, and the sender claims it at or after `T`.
@@ -137,7 +172,8 @@ you sign is the asset amount, explained from the XDR as before.
    | `OPENAI_VOICE_BACKEND_MODEL`, `OPENAI_VOICE` | Optional, for voice mode (GPT-Live, needs a paid API tier). The model that turns speech into a send or price request defaults to `OPENAI_MODEL`; the voice to `marin`. |
    | `VOICE_ALLOWED_ADDRESSES` | Optional. Voice mode is for signed-in wallets, which sign a message once (SEP-53) so the server can tell who opens sessions on its key. Set comma-separated G… addresses to allow only those wallets, e.g. the presenter's during a demo. |
    | `VITE_POLLAR_API_KEY` | Pollar dashboard → Build → API Keys → **publishable** key (`pub_testnet_…`). Never use a secret key here: `VITE_*` values are shipped to the browser. |
-   | `SPONSOR_SECRET` | Written for you by step 4. Testnet secret of the account that pays claim fees and trustline reserves. Server-side only. |
+   | `NILO_OPERATOR_SECRET` | Optional, server-side only. Testnet key of Nilo's operator, the only key the NiloAgent contract lets call `invest`. Without it the scheduled agent doesn't start. `AGENT_INTERVAL_MINUTES` (default 60) and `DATA_DIR` (default `data`) are optional. |
+| `SPONSOR_SECRET` | Written for you by step 4. Testnet secret of the account that pays claim fees and trustline reserves. Server-side only. |
 
 3. In the Pollar dashboard, add `http://localhost:5173` as an allowed origin and redirect URI, and make sure the app
    has credits for wallet creation.
@@ -212,7 +248,9 @@ Helper scripts:
 |---|---|
 | [`packages/core`](packages/core) | Pure TypeScript, no UI: intent schema, validation, transaction builder, XDR explainer, predicate evaluation, price math. All the tests live here. |
 | [`apps/server`](apps/server) | Four endpoints. `POST /api/extract`: chat messages in, a structured send intent, price question or clarifying question out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. `POST /api/faucet`: an address in, 100 test USDC from the Sozu Faucet, rate-limited per account (1/day), per IP (3/day), per server (20/hour), one at a time, and paused while Sozu says it is out or cooling down. `POST /api/voice/session`: a WebRTC SDP offer and a SEP-53 proof of wallet ownership in, the SDP answer of a GPT-Live voice session out, rate-limited per wallet (10/hour) and per server (60/hour). Nothing is built or signed there: the browser shows the usual review. |
-| [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance, ask for a price), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
+| [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance, ask for a price), **Agent** (profile, mandate, positions), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
+| [`contracts/soroban/nilo-agent`](contracts/soroban/nilo-agent) | The NiloAgent Soroban contract: mandates, caps, venues, invest, withdraw and revoke, with its tests. |
+| [`apps/server/src/agent`](apps/server/src/agent) | The scheduled agent that reads each mandate and invests with the operator key. |
 | [`scripts/`](scripts) | Testnet and sponsor setup, the wallet-free smoke tests, and the demo reset. |
 
 ## Limits of v1
@@ -225,7 +263,3 @@ Helper scripts:
   limits before mainnet.
 - Passkey smart wallets (`C…` addresses) are not supported: claimable balances are classic operations.
 
-## Next
-
-Path payments with a strict worst-case price shown before signing, so "send 50 USDC, pay in XLM" stays just as
-explainable.
