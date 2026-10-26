@@ -1,19 +1,26 @@
-import { explain, type Explanation } from "@nilo/core";
+import { type AgentExplanation, explain, type Explanation } from "@nilo/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { config, explorerTx } from "../stellar";
 import { UserCancelled, isSubmitFailure, useWallet } from "../wallet";
 import { ExplainCard } from "./ExplainCard";
 
-export interface Prepared {
-  xdr: string;
-  /** Names of fields where the decoded transaction disagrees with what was requested. */
-  check: (e: Explanation) => string[];
-}
+/** What a panel can show: a payment or claim, or a call to Nilo's agent contract. */
+export type AnyExplanation = Explanation | AgentExplanation;
+
+/** A built transaction plus how to check it: a payment or claim, or a call to Nilo's agent contract. */
+export type Prepared =
+  | {
+      xdr: string;
+      /** Names of fields where the decoded transaction disagrees with what was requested. */
+      check: (e: Explanation) => string[];
+      agent?: undefined;
+    }
+  | { xdr: string; check: (e: AgentExplanation) => string[]; agent: (xdr: string) => AgentExplanation };
 
 type State =
   | { step: "building"; notice?: string }
-  | { step: "review"; xdr: string; explanation: Explanation; problems: string[]; notice?: string }
-  | { step: "signing"; xdr: string; explanation: Explanation; problems: string[] }
+  | { step: "review"; xdr: string; explanation: AnyExplanation; problems: string[]; notice?: string }
+  | { step: "signing"; xdr: string; explanation: AnyExplanation; problems: string[] }
   | { step: "done"; hash: string }
   | { step: "error"; message: string };
 
@@ -40,8 +47,13 @@ export function SignPanel({ prepare, signLabel, onCancel, onDone, doneMessage }:
       setState({ step: "building", notice });
       try {
         const p = await prepareRef.current();
-        const explanation = explain(p.xdr, config);
-        setState({ step: "review", xdr: p.xdr, explanation, problems: p.check(explanation), notice });
+        if (p.agent) {
+          const explanation = p.agent(p.xdr);
+          setState({ step: "review", xdr: p.xdr, explanation, problems: p.check(explanation), notice });
+        } else {
+          const explanation = explain(p.xdr, config);
+          setState({ step: "review", xdr: p.xdr, explanation, problems: p.check(explanation), notice });
+        }
       } catch (e) {
         setState({ step: "error", message: (e as Error).message });
       }

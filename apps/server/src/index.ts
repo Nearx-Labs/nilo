@@ -3,6 +3,8 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import { serveStatic } from "@hono/node-server/serve-static";
 import OpenAI from "openai";
 import { type Context, Hono } from "hono";
+import { agent } from "./agent/routes";
+import { startSchedule } from "./agent/run";
 import { ChatSchema, extractIntent } from "./extract";
 import { FaucetError, FaucetRequest, requestFaucet } from "./faucet";
 import { SponsorError, SponsorRequest, sponsorClaim } from "./sponsor";
@@ -77,6 +79,8 @@ app.post("/api/voice/session", async (c) => {
   }
 });
 
+app.route("/api/agent", agent);
+
 // In the Docker image the server also serves the built web app (STATIC_DIR, relative to the working directory).
 // Unknown paths fall back to index.html so BrowserRouter routes survive a reload.
 const staticDir = process.env.STATIC_DIR;
@@ -88,6 +92,8 @@ if (staticDir) {
 if (!process.env.OPENAI_API_KEY) {
   console.warn("No OPENAI_API_KEY set (see .env.example): /api/extract will fail until it is.");
 }
+
+startSchedule();
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, () => console.log(`Nilo server on http://localhost:${port}`));

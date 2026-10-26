@@ -19,6 +19,7 @@ import { profileLabel, useProfile } from "../profile";
 import { WATCHING, useAutoTrustline, useWallet } from "../wallet";
 import { Onboarding } from "./Onboarding";
 import {
+  AgentIcon,
   ChartIcon,
   CoinsIcon,
   HistoryIcon,
@@ -50,6 +51,7 @@ export interface QuickAction {
 }
 
 export const QUICK_ACTIONS: QuickAction[] = [
+  { title: "Put my money to work", hint: "An agent that invests while you sleep", Icon: AgentIcon, tone: "violet", to: "/agent" },
   { title: "Send a payment", hint: "To a contact or any G… address", Icon: SendIcon, tone: "violet", action: "example" },
   { title: "Check balance", hint: "View your available funds", Icon: WalletIcon, tone: "blue", action: "balance" },
   { title: "Claim a payment", hint: "See what's waiting for you", Icon: InboxIcon, tone: "green", to: "/claim" },
@@ -193,6 +195,15 @@ function Sidebar({
       )}
 
       <nav className="side-list">
+        <NavLink to="/agent" className="side-row" onClick={onNavigate}>
+          <span className="row-avatar tone-violet">
+            <AgentIcon />
+          </span>
+          <span className="row-text">
+            <strong>Agent</strong>
+            <span>Invests while you sleep</span>
+          </span>
+        </NavLink>
         <NavLink to="/claim" className="side-row" onClick={onNavigate}>
           <span className="row-avatar tone-green">
             <InboxIcon />

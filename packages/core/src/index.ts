@@ -6,3 +6,5 @@ export * from "./predicates";
 export * from "./explain";
 export * from "./prices";
 export * from "./voiceProof";
+export * from "./agent";
+export * from "./explainAgent";
