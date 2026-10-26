@@ -38,10 +38,17 @@ function load(): State {
 
 const state = load();
 
+// A failed write must not fail the investment it records: keep the log in memory and warn.
+let warned = false;
 function save() {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(`${file}.tmp`, JSON.stringify(state));
-  renameSync(`${file}.tmp`, file);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${file}.tmp`, JSON.stringify(state));
+    renameSync(`${file}.tmp`, file);
+  } catch (e) {
+    if (!warned) console.warn(`Agent log not saved to ${file}; keeping it in memory:`, (e as Error).message);
+    warned = true;
+  }
 }
 
 export const users = () => [...state.users];
