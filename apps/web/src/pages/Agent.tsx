@@ -2,6 +2,7 @@ import {
   PERSONALITIES,
   type PersonalityId,
   TESTNET_AGENT,
+  VENUE_CROSSCHAIN,
   VENUES,
   type VenueId,
   explainAgent,
@@ -30,14 +31,17 @@ import { formatLocal } from "../time";
 import { useWallet } from "../wallet";
 
 const decode = (xdr: string) => explainAgent(xdr, config, TESTNET_AGENT);
-const reachable = (v: VenueId) => TESTNET_AGENT.venues.includes(v);
+const deployed = (v: VenueId) => TESTNET_AGENT.venues.includes(v);
+const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const usdc = (n: number, digits = 2) => `${n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: 7 })} USDC`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type Flow = { kind: "mandate"; personality: PersonalityId } | { kind: "withdraw" } | { kind: "revoke" } | null;
 
 export function AgentPage() {
-  const { address, connect } = useWallet();
+  const { address, evmAddress, connect } = useWallet();
+  // Cross-chain needs the user's own EVM wallet; without one that share stays on Stellar.
+  const reachable = (v: VenueId) => deployed(v) && (v !== VENUE_CROSSCHAIN || !!evmAddress);
   const [profile] = useProfile(address);
   // Rules an advanced user wrote in the chat arrive as router state.
   const rules = ((useLocation().state as { agent?: AgentRequest } | null)?.agent ?? {}) as AgentRequest;
@@ -96,7 +100,7 @@ export function AgentPage() {
 
   const mandatePrepare = async (): Promise<Prepared> => {
     const p = flow?.kind === "mandate" ? flow.personality : pick;
-    const r = await mandateTx(address!, p, rules);
+    const r = await mandateTx(address!, p, rules, evmAddress);
     return { xdr: r.xdr, agent: decode, check: (e) => mandateMismatches(e, address!, r.mandate, r.allowance) };
   };
   const actionPrepare = (action: "withdraw" | "revoke") => async (): Promise<Prepared> => {
@@ -129,7 +133,7 @@ export function AgentPage() {
             </section>
           )}
 
-          {address && error && <p className="error">{error}</p>}
+          {address && error && <p className="error">{status ? `Couldn't refresh: ${error}` : error}</p>}
           {address && !status && !error && <p className="muted">Loading your agent…</p>}
 
           {address && status && !status.mandate && flow?.kind !== "mandate" && (
@@ -160,7 +164,7 @@ export function AgentPage() {
                         {venues.map((v) => (
                           <span key={v} className={reachable(v) ? "" : "soon"}>
                             {(p.weights[v]! / 100).toFixed(0)}% {VENUES[v].name} · {VENUES[v].place}
-                            {!reachable(v) && " (soon: goes to XOXNO for now)"}
+                            {!reachable(v) && " (needs an EVM wallet: goes to XOXNO for now)"}
                           </span>
                         ))}
                       </span>
@@ -172,6 +176,12 @@ export function AgentPage() {
                 <p className="notice">
                   Your rules from the chat: {rules.weeklyLimit ? `at most ${rules.weeklyLimit} USDC a week` : "the personality's weekly limit"}
                   {rules.days ? ` for ${rules.days} days` : " for 30 days"}. The mandate you sign will say exactly this.
+                </p>
+              )}
+              {evmAddress && (
+                <p className="muted small">
+                  Cross-chain moves go to your own wallet {short(evmAddress)} on {TESTNET_AGENT.destination.name}, through
+                  Circle CCTP. Circle keeps a small fee (a few cents) to pay the gas there.
                 </p>
               )}
               <p className="muted small">
@@ -224,6 +234,9 @@ function Dashboard({ status, running, onRun, onFlow }: { status: AgentStatus; ru
         <Stat label="Invested" value={usdc(status.xoxno.balance)} />
         <Stat label="Earned" value={usdc(earned, 7)} />
         <Stat label="In your wallet" value={usdc(status.wallet)} />
+        {status.destination.wallet && (
+          <Stat label={`On ${status.destination.name}`} value={status.destination.balance === null ? "–" : usdc(status.destination.balance)} />
+        )}
         <Stat label="XOXNO rate" value={status.xoxno.apy !== null ? `${(status.xoxno.apy * 100).toFixed(2)}% a year` : "–"} />
       </div>
 
@@ -285,10 +298,10 @@ function ActivityRow({ a }: { a: AgentActivity }) {
       <span className="activity-kind">{KIND_LABEL[a.kind]}</span>
       <span className="activity-note">
         {a.note}
-        {a.hash && (
+        {(a.hash || a.link) && (
           <>
             {" "}
-            <a href={explorerTx(a.hash)} target="_blank" rel="noreferrer">
+            <a href={a.link ?? explorerTx(a.hash!)} target="_blank" rel="noreferrer">
               View transaction
             </a>
           </>

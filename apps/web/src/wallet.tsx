@@ -50,6 +50,9 @@ const WATCH = import.meta.env.DEV ? new URLSearchParams(location.search).get("wa
 /** True in the dev-only watch mode: a public address with no session. */
 export const WATCHING = !!WATCH;
 
+// Dev only, with ?watch=: ?evm=0x… stands in for the Pollar EVM wallet.
+const WATCH_EVM = import.meta.env.DEV ? new URLSearchParams(location.search).get("evm") : null;
+
 export function useWallet() {
   const { wallets, isAuthenticated, openLoginModal, signAndSubmitTx, setTrustline } = usePollar();
   return useMemo(() => {
@@ -64,8 +67,13 @@ export function useWallet() {
             ? "Pollar could not create your account on testnet. Sign out and sign in again to retry."
             : null;
     const address = WATCH ?? (error ? null : (stellar?.address ?? null));
+    // Pollar's Polygon wallet is a plain EVM account: the same address receives USDC on Base.
+    const evm = wallets.find((w) => w.chain === "POLYGON")?.address;
+    const evmAddress = WATCH_EVM ?? (evm && /^0x[0-9a-fA-F]{40}$/.test(evm) ? evm : null);
     return {
       address,
+      /** The user's own EVM wallet, where cross-chain investments land; null when Pollar made none. */
+      evmAddress,
       custody: stellar?.custody ?? null,
       /** Pollar creates new accounts in the background: CREATING until it is on the ledger. */
       provisioning: stellar?.provisioning ?? null,

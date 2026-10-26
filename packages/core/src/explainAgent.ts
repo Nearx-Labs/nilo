@@ -21,6 +21,8 @@ export interface AgentFields {
   allowanceLedger?: number;
   /** Stroops; 0 on withdraw means everything. */
   amount?: bigint;
+  /** Most Circle's forwarder may keep on a cross-chain invest, in stroops. */
+  bridgeFee?: bigint;
   venue?: VenueId;
   fee: string;
 }
@@ -147,6 +149,11 @@ export function explainAgent(xdrBase64: string, config: AppConfig, agent: AgentC
           `Lets Nilo's agent invest up to ${usdc(mandate.limit)} of your USDC per ${period(mandate.period)} into ${venueNames(mandate.venues)}.`,
           `The agent can draw at most ${usdc(BigInt(allowance))} in total and can only invest until ${formatUtc(mandate.expiresAt)}.`,
           `Withdrawals always pay your own account ${user}; the agent cannot send your USDC anywhere else.`,
+          ...(mandate.evmRecipient
+            ? [
+                `Cross-chain moves can only go to your own wallet ${mandate.evmRecipient} on ${agent.destination.name}, through Circle CCTP. Circle keeps up to ${agent.maxBridgeFee} USDC per move to pay the gas there.`,
+              ]
+            : []),
           `Personality: ${p ? p.name : mandate.profile}. You can revoke this at any time.`,
           ...footer,
         ],
@@ -184,15 +191,16 @@ export function explainAgent(xdrBase64: string, config: AppConfig, agent: AgentC
       };
     }
     case "invest": {
-      const [user, venue, amount] = a as [string, number, bigint];
-      if (a.length !== 3 || tx.source !== agent.operator) return unrecognized("only Nilo's operator invests through the agent.");
+      const [user, venue, amount, maxFee] = a as [string, number, bigint, bigint];
+      if (a.length !== 4 || tx.source !== agent.operator) return unrecognized("only Nilo's operator invests through the agent.");
       if (!(Number(venue) in VENUES)) return unrecognized(`unknown venue ${venue}.`);
       const v = Number(venue) as VenueId;
       return {
         kind: "agent",
-        fields: { action: "invest", source: tx.source, user, venue: v, amount: BigInt(amount), fee },
+        fields: { action: "invest", source: tx.source, user, venue: v, amount: BigInt(amount), bridgeFee: BigInt(maxFee), fee },
         lines: [
           `Nilo's agent invests ${stroopsToUsdc(BigInt(amount))} USDC of ${user} into ${VENUES[v].name} on ${VENUES[v].place}, as their mandate allows.`,
+          ...(BigInt(maxFee) > 0n ? [`Circle may keep up to ${stroopsToUsdc(BigInt(maxFee))} USDC of it to pay the gas on ${agent.destination.name}.`] : []),
           "The contract checks the mandate's limit, venues and expiry before moving anything.",
           ...footer,
         ],
@@ -215,6 +223,7 @@ export function mandateMismatches(expl: AgentExplanation, user: string, expected
   if (m.expiresAt !== expected.expiresAt) out.push("expiry");
   if (m.venues !== expected.venues) out.push("venues");
   if (m.profile !== expected.profile) out.push("personality");
+  if ((m.evmRecipient ?? "") !== (expected.evmRecipient ?? "").toLowerCase()) out.push("destination wallet");
   if (f.allowance !== allowance) out.push("allowance");
   return out;
 }

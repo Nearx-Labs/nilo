@@ -10,6 +10,7 @@ export interface AgentActivity {
   venue?: number;
   amount?: string;
   hash?: string;
+  link?: string;
   note: string;
 }
 
@@ -20,6 +21,7 @@ export interface AgentStatus {
   wallet: number;
   xoxno: { balance: number; principal: number; account: number; apy: number | null };
   bridged: number;
+  destination: { name: string; wallet: string | null; balance: number | null };
   activity: AgentActivity[];
 }
 
@@ -43,12 +45,13 @@ export interface AgentRequest {
   days?: number;
 }
 
-export async function mandateTx(address: string, personality: PersonalityId, rules: AgentRequest = {}) {
+export async function mandateTx(address: string, personality: PersonalityId, rules: AgentRequest = {}, evmRecipient?: string | null) {
   const r = await call<{ xdr: string; mandate: Omit<Mandate, "limit"> & { limit: string }; allowance: string }>("/mandate-tx", {
     address,
     personality,
     weeklyLimit: rules.weeklyLimit,
     days: rules.days,
+    evmRecipient: evmRecipient ?? undefined,
   });
   return { xdr: r.xdr, mandate: { ...r.mandate, limit: BigInt(r.mandate.limit) } as Mandate, allowance: BigInt(r.allowance) };
 }

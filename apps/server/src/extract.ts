@@ -25,7 +25,7 @@ There are three kinds of request. Set "kind" accordingly.
 Leave amount, recipient, deadlineSeconds and fiatCurrency null. Never answer the price yourself; the app reads it from an on-chain oracle.
 
 3. kind "agent": the user wants Nilo to invest their money for them, put their money to work, earn yield, or set up or change the investing agent (e.g. "invest my money while I sleep", "quero investir no máximo 30 dólares por semana", "be conservative with my savings"). Fill only what the user said:
-- agentPersonality: "guardian" if they want to be careful or conservative, "balanced" for moderate, "explorer" for aggressive or chasing yield; otherwise null.
+- agentPersonality: "guardian" if they want to be careful or conservative, "balanced" for moderate, "explorer" for aggressive, or for moving money across chains; otherwise null.
 - weeklyLimit: the most they want invested per week, as a number of dollars or USDC (e.g. "30 dólares por semana" -> 30); otherwise null.
 - days: how long the agent may keep investing, in whole days (e.g. "for two weeks" -> 14); otherwise null.
 Leave the payment and price fields null. A request to invest is complete even when all three are null.

@@ -4,7 +4,8 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import { Hono } from "hono";
 import { z } from "zod";
-import { TESTNET_AGENT, agentCalls, allowanceFor, mandateFrom, personality, stroopsToUsdc, usdcToStroops } from "@nilo/core";
+import { TESTNET_AGENT, agentCalls, allowanceFor, isEvmAddress, mandateFrom, personality, stroopsToUsdc, usdcToStroops } from "@nilo/core";
+import { evmUsdc } from "./cctp";
 import { AgentError, activate, mandateOf, runFor, walletUsdc } from "./run";
 import { currentLedger, prepare, read } from "./soroban";
 import { activityFor } from "./store";
@@ -17,6 +18,8 @@ const MandateRequest = z.object({
   /** An advanced user's own weekly cap, in USDC; the personality's otherwise. */
   weeklyLimit: z.number().positive().max(1_000).optional(),
   days: z.number().int().min(1).max(90).optional(),
+  /** The user's own EVM wallet; without it the mandate stays on Stellar. */
+  evmRecipient: z.string().refine(isEvmAddress, "Invalid EVM address.").optional(),
 });
 const AddressRequest = z.object({ address: Account });
 const WithdrawRequest = z.object({ address: Account, amount: z.string().regex(/^\d+(\.\d{1,7})?$/) });
@@ -55,15 +58,17 @@ export const agent = new Hono();
 agent.onError((e, c) => {
   if (e instanceof AgentError) return c.json({ message: e.message }, e.status);
   console.error("agent route failed:", e);
-  const missing = /Account not found|404/.test(String(e));
-  return c.json({ message: missing ? "Your account is not on testnet yet." : "The agent could not do that right now." }, missing ? 404 : 502);
+  // Only the user's own missing account is their problem; anything else is the network hiccuping.
+  const missing = /Account not found: (G[A-Z2-7]{55})/.exec(String(e))?.[1];
+  if (missing && missing !== TESTNET_AGENT.operator) return c.json({ message: "Your account is not on testnet yet." }, 404);
+  return c.json({ message: "The Stellar network did not answer. Try again in a moment." }, 502);
 });
 
 agent.post("/mandate-tx", async (c) => {
-  const { address, personality: id, weeklyLimit, days } = await body(c.req.raw, MandateRequest);
+  const { address, personality: id, weeklyLimit, days, evmRecipient } = await body(c.req.raw, MandateRequest);
   const now = Math.floor(Date.now() / 1000);
   const base = personality(id)!;
-  const mandate = mandateFrom(weeklyLimit ? { ...base, weeklyLimit } : base, now, days ?? 30, TESTNET_AGENT.venues);
+  const mandate = mandateFrom(weeklyLimit ? { ...base, weeklyLimit } : base, now, days ?? 30, TESTNET_AGENT.venues, evmRecipient);
   const allowance = allowanceFor(mandate, now, await currentLedger());
   const tx = await prepare(address, calls.setMandate(address, mandate, allowance.amount, allowance.ledger));
   return c.json({
@@ -114,6 +119,11 @@ agent.get("/status/:address", async (c) => {
     wallet: stroopsToUsdc(wallet),
     xoxno: { balance: stroopsToUsdc(BigInt(xoxno)), principal: stroopsToUsdc(BigInt(position.xoxno_principal)), account: Number(position.xoxno_account), apy },
     bridged: stroopsToUsdc(BigInt(position.bridged)),
+    destination: {
+      name: TESTNET_AGENT.destination.name,
+      wallet: mandate?.evmRecipient ?? null,
+      balance: mandate?.evmRecipient ? await evmUsdc(mandate.evmRecipient).catch(() => null) : null,
+    },
     activity: activityFor(address),
   });
 });

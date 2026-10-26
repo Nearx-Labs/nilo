@@ -2,7 +2,7 @@ import { Account, Address, Memo, Operation, TransactionBuilder, nativeToScVal, x
 import { describe, expect, it } from "vitest";
 import {
   type AgentConfig,
-  VENUE_AAVE_ARBITRUM,
+  VENUE_CROSSCHAIN,
   VENUE_XOXNO,
   allowanceFor,
   explainAgent,
@@ -15,12 +15,15 @@ import {
 import { ALICE, NOW_SEC, SPONSOR, STRANGER, config } from "./fixtures";
 
 const agent: AgentConfig = {
-  contract: "CC4VU642T2Z4IEGANZV4HUIEQDOWP2YONA6AFX53WUHNYGZ5VZTZQTR7",
+  contract: "CDDWGI7BZMRP4H4NREJVGO56RWIZISX6BARK5T3MZGHLK5JAXW2R7YZJ",
   operator: SPONSOR,
   usdcContract: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
   xoxnoController: "CCXRWJ6SIU2WPFEGLFGJVITPL57QAYIMIO6OAM2NBGNDQSSCK2FFV3F3",
   rpcUrl: "https://soroban-testnet.stellar.org",
   venues: [VENUE_XOXNO],
+  irisUrl: "https://iris-api-sandbox.circle.com",
+  destination: { domain: 6, name: "Base Sepolia", rpcUrl: "", usdc: "", explorer: "" },
+  maxBridgeFee: 0.5,
 };
 const OTHER_CONTRACT = "CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP";
 
@@ -98,7 +101,7 @@ describe("explainAgent: set_mandate", () => {
   rejects("a missing approval", mandateTx([]));
   rejects("a fee above 5 XLM", mandateTx([approve()], mandateArgs, { fee: "60000000" }));
   rejects("a venue Nilo doesn't run", (() => {
-    const both = { ...mandate, venues: VENUE_XOXNO | VENUE_AAVE_ARBITRUM };
+    const both = { ...mandate, venues: VENUE_XOXNO | VENUE_CROSSCHAIN };
     const args = [addr(ALICE), mandateToScVal(both), i128(allowance), u32(ledger)];
     return mandateTx([approve()], args);
   })());
@@ -134,7 +137,7 @@ describe("explainAgent: revoke, withdraw, invest", () => {
   });
 
   it("only accepts invest from Nilo's operator", () => {
-    const args = [addr(ALICE), u32(VENUE_XOXNO), i128(20_000_000n)];
+    const args = [addr(ALICE), u32(VENUE_XOXNO), i128(20_000_000n), i128(0n)];
     const auth = [sourceAuth(invocation(agent.contract, "invest", args))];
     expect(explainAgent(craft("invest", args, auth, { source: SPONSOR }), config, agent).kind).toBe("agent");
     expect(explainAgent(craft("invest", args, auth), config, agent).kind).toBe("unrecognized");
@@ -143,10 +146,10 @@ describe("explainAgent: revoke, withdraw, invest", () => {
 
 describe("split", () => {
   it("follows the personality's weights over the allowed venues", () => {
-    const legs = split(100_000_000n, personality("balanced")!, VENUE_XOXNO | VENUE_AAVE_ARBITRUM);
+    const legs = split(100_000_000n, personality("balanced")!, VENUE_XOXNO | VENUE_CROSSCHAIN);
     expect(legs).toEqual([
       { venue: VENUE_XOXNO, amount: 60_000_000n },
-      { venue: VENUE_AAVE_ARBITRUM, amount: 40_000_000n },
+      { venue: VENUE_CROSSCHAIN, amount: 40_000_000n },
     ]);
   });
 
@@ -155,8 +158,31 @@ describe("split", () => {
   });
 
   it("rounds the CCTP leg to whole 6-decimal units and keeps the total", () => {
-    const legs = split(10_000_003n, personality("explorer")!, VENUE_XOXNO | VENUE_AAVE_ARBITRUM);
+    const legs = split(10_000_003n, personality("explorer")!, VENUE_XOXNO | VENUE_CROSSCHAIN);
     expect(legs.reduce((s, l) => s + l.amount, 0n)).toBe(10_000_003n);
-    expect(legs.find((l) => l.venue === VENUE_AAVE_ARBITRUM)!.amount % 10n).toBe(0n);
+    expect(legs.find((l) => l.venue === VENUE_CROSSCHAIN)!.amount % 10n).toBe(0n);
+  });
+});
+
+describe("explainAgent: cross-chain mandate", () => {
+  const crossAgent = { ...agent, venues: [VENUE_XOXNO, VENUE_CROSSCHAIN] as (1 | 2)[] };
+  const wallet = "0x00000000000000000000000000000000000000ab";
+  const m = mandateFrom(personality("balanced")!, NOW_SEC, 30, crossAgent.venues, wallet);
+  const { amount, ledger: until } = allowanceFor(m, NOW_SEC, 1_000_000);
+  const args = [addr(ALICE), mandateToScVal(m), i128(amount), u32(until)];
+  const appr = invocation(agent.usdcContract, "approve", [addr(ALICE), addr(agent.contract), i128(amount), u32(until)]);
+  const xdrB64 = craft("set_mandate", args, [sourceAuth(invocation(agent.contract, "set_mandate", args, [appr]))]);
+
+  it("names the user's own destination wallet and the forwarder's fee cap", () => {
+    const e = explainAgent(xdrB64, config, crossAgent);
+    expect(e.kind).toBe("agent");
+    expect(mandateMismatches(e, ALICE, m, amount)).toEqual([]);
+    expect(e.lines.join("\n")).toContain(`only go to your own wallet ${wallet} on Base Sepolia`);
+  });
+
+  it("leaves the cross-chain venue out when the user has no EVM wallet", () => {
+    const noWallet = mandateFrom(personality("balanced")!, NOW_SEC, 30, crossAgent.venues);
+    expect(noWallet.venues).toBe(VENUE_XOXNO);
+    expect(noWallet.evmRecipient).toBeUndefined();
   });
 });

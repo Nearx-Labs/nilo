@@ -85,10 +85,10 @@ impl MockMessenger {
         caller: Address,
         amount: i128,
         _destination_domain: u32,
-        _mint_recipient: BytesN<32>,
+        mint_recipient: BytesN<32>,
         _burn_token: Address,
-        _destination_caller: BytesN<32>,
-        _max_fee: i128,
+        destination_caller: BytesN<32>,
+        max_fee: i128,
         _min_finality_threshold: u32,
         hook_data: Bytes,
     ) {
@@ -96,9 +96,9 @@ impl MockMessenger {
         let usdc: Address = env.storage().instance().get(&0u32).unwrap();
         let this = env.current_contract_address();
         TokenClient::new(&env, &usdc).transfer_from(&this, &caller, &this, &amount);
-        env.storage().instance().set(&1u32, &hook_data);
+        env.storage().instance().set(&1u32, &(hook_data, mint_recipient, destination_caller, max_fee));
     }
-    pub fn last_hook(env: Env) -> Bytes {
+    pub fn last_burn(env: Env) -> (Bytes, BytesN<32>, BytesN<32>, i128) {
         env.storage().instance().get(&1u32).unwrap()
     }
 }
@@ -142,8 +142,8 @@ fn setup() -> Setup {
         hub_id: 1,
         spoke_id: 1,
         messenger: messenger.clone(),
-        dest_domain: 3,
-        vault: BytesN::from_array(&env, &[7; 32]),
+        dest_domain: 6,
+        max_bridge_fee: 5_000_000,
     };
     let agent_id = env.register(NiloAgent, (config,));
     let agent = NiloAgentClient::new(&env, &agent_id);
@@ -162,21 +162,32 @@ fn setup() -> Setup {
 }
 
 fn mandate(env: &Env, venues: u32) -> Mandate {
-    Mandate { limit: 100 * USDC, period: 7 * 86_400, expires_at: 1_000_000 + 30 * 86_400, venues, profile: Symbol::new(env, "balanced") }
+    Mandate {
+        limit: 100 * USDC,
+        period: 7 * 86_400,
+        expires_at: 1_000_000 + 30 * 86_400,
+        venues,
+        profile: Symbol::new(env, "balanced"),
+        evm_recipient: Some(BytesN::from_array(env, &[9; 32])),
+    }
 }
 
 /// Only the operator's root call is authorized; everything else must come from the contract itself.
 fn invest_as_operator(s: &Setup, venue: u32, amount: i128) {
+    invest_with_fee(s, venue, amount, 0);
+}
+
+fn invest_with_fee(s: &Setup, venue: u32, amount: i128, fee: i128) {
     s.env.mock_auths(&[MockAuth {
         address: &s.operator,
         invoke: &MockAuthInvoke {
             contract: &s.agent.address,
             fn_name: "invest",
-            args: (s.user.clone(), venue, amount).into_val(&s.env),
+            args: (s.user.clone(), venue, amount, fee).into_val(&s.env),
             sub_invokes: &[],
         },
     }]);
-    s.agent.invest(&s.user, &venue, &amount);
+    s.agent.invest(&s.user, &venue, &amount, &fee);
 }
 
 #[test]
@@ -201,17 +212,32 @@ fn invests_into_xoxno_within_the_mandate() {
 }
 
 #[test]
-fn bridges_with_the_user_as_beneficiary() {
+fn bridges_to_the_users_own_wallet_through_circles_forwarder() {
     let s = setup();
-    s.agent.set_mandate(&s.user, &mandate(&s.env, VENUE_XOXNO | VENUE_AAVE_ARBITRUM), &(400 * USDC), &5_000);
-    invest_as_operator(&s, VENUE_AAVE_ARBITRUM, 40 * USDC);
+    s.agent.set_mandate(&s.user, &mandate(&s.env, VENUE_XOXNO | VENUE_CROSSCHAIN), &(400 * USDC), &5_000);
+    invest_with_fee(&s, VENUE_CROSSCHAIN, 40 * USDC, 2_100_000);
     assert_eq!(s.usdc.balance(&s.messenger), 40 * USDC);
     assert_eq!(s.agent.position(&s.user).bridged, 40 * USDC);
-    let hook = MockMessengerClient::new(&s.env, &s.messenger).last_hook();
-    let strkey = s.user.to_string();
-    let mut expected = [0u8; 56];
-    strkey.copy_into_slice(&mut expected);
-    assert_eq!(hook, Bytes::from_array(&s.env, &expected));
+    let (hook, recipient, caller, fee) = MockMessengerClient::new(&s.env, &s.messenger).last_burn();
+    let mut magic = [0u8; 32];
+    magic[..12].copy_from_slice(b"cctp-forward");
+    assert_eq!(hook, Bytes::from_array(&s.env, &magic));
+    assert_eq!(recipient, BytesN::from_array(&s.env, &[9; 32]));
+    assert_eq!(caller, BytesN::from_array(&s.env, &[0; 32]));
+    assert_eq!(fee, 2_100_000);
+}
+
+#[test]
+fn caps_the_bridge_fee_and_needs_a_recipient() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let mut m = mandate(&s.env, VENUE_CROSSCHAIN);
+    m.evm_recipient = None;
+    assert_eq!(s.agent.try_set_mandate(&s.user, &m, &USDC, &5_000), Err(Ok(Error::BadMandate.into())));
+    s.agent.set_mandate(&s.user, &mandate(&s.env, VENUE_XOXNO | VENUE_CROSSCHAIN), &(400 * USDC), &5_000);
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_CROSSCHAIN, &(40 * USDC), &5_000_010), Err(Ok(Error::BadAmount.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_CROSSCHAIN, &4_000_000, &2_500_000), Err(Ok(Error::BadAmount.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &(4 * USDC), &10), Err(Ok(Error::BadAmount.into())));
 }
 
 #[test]
@@ -220,7 +246,7 @@ fn enforces_the_period_limit_and_resets_it() {
     s.agent.set_mandate(&s.user, &mandate(&s.env, VENUE_XOXNO), &(1_000 * USDC), &50_000);
     invest_as_operator(&s, VENUE_XOXNO, 100 * USDC);
     s.env.mock_all_auths();
-    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &1), Err(Ok(Error::OverLimit.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &1, &0), Err(Ok(Error::OverLimit.into())));
     s.env.ledger().with_mut(|l| l.timestamp += 7 * 86_400);
     invest_as_operator(&s, VENUE_XOXNO, 100 * USDC);
     assert_eq!(s.agent.position(&s.user).xoxno_principal, 200 * USDC);
@@ -230,20 +256,20 @@ fn enforces_the_period_limit_and_resets_it() {
 fn refuses_venues_outside_the_mandate_expired_or_revoked() {
     let s = setup();
     s.env.mock_all_auths();
-    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC), Err(Ok(Error::NoMandate.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC, &0), Err(Ok(Error::NoMandate.into())));
     s.agent.set_mandate(&s.user, &mandate(&s.env, VENUE_XOXNO), &(400 * USDC), &5_000);
-    assert_eq!(s.agent.try_invest(&s.user, &VENUE_AAVE_ARBITRUM, &USDC), Err(Ok(Error::VenueNotAllowed.into())));
-    assert_eq!(s.agent.try_invest(&s.user, &4, &USDC), Err(Ok(Error::VenueNotAllowed.into())));
-    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &0), Err(Ok(Error::BadAmount.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_CROSSCHAIN, &USDC, &0), Err(Ok(Error::VenueNotAllowed.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &4, &USDC, &0), Err(Ok(Error::VenueNotAllowed.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &0, &0), Err(Ok(Error::BadAmount.into())));
 
     s.env.ledger().with_mut(|l| l.timestamp += 31 * 86_400);
-    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC), Err(Ok(Error::Expired.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC, &0), Err(Ok(Error::Expired.into())));
 
     s.env.ledger().with_mut(|l| l.timestamp -= 31 * 86_400);
     s.agent.revoke(&s.user);
     assert_eq!(s.usdc.allowance(&s.user, &s.agent.address), 0);
     assert_eq!(s.agent.mandate(&s.user), None);
-    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC), Err(Ok(Error::NoMandate.into())));
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC, &0), Err(Ok(Error::NoMandate.into())));
 }
 
 #[test]
@@ -260,7 +286,7 @@ fn only_the_operator_can_invest() {
             sub_invokes: &[],
         },
     }]);
-    assert!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC).is_err());
+    assert!(s.agent.try_invest(&s.user, &VENUE_XOXNO, &USDC, &0).is_err());
 }
 
 #[test]
@@ -299,8 +325,8 @@ fn rejects_bad_mandates_and_dusty_bridges() {
     m.expires_at = 1;
     assert_eq!(s.agent.try_set_mandate(&s.user, &m, &USDC, &5_000), Err(Ok(Error::BadMandate.into())));
 
-    s.agent.set_mandate(&s.user, &mandate(&s.env, VENUE_AAVE_ARBITRUM), &(400 * USDC), &5_000);
-    assert_eq!(s.agent.try_invest(&s.user, &VENUE_AAVE_ARBITRUM, &(USDC + 3)), Err(Ok(Error::BadAmount.into())));
+    s.agent.set_mandate(&s.user, &mandate(&s.env, VENUE_CROSSCHAIN), &(400 * USDC), &5_000);
+    assert_eq!(s.agent.try_invest(&s.user, &VENUE_CROSSCHAIN, &(USDC + 3), &0), Err(Ok(Error::BadAmount.into())));
 }
 
 #[test]

@@ -1,3 +1,4 @@
+import { setDefaultResultOrder } from "node:dns";
 import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -9,6 +10,9 @@ import { ChatSchema, extractIntent } from "./extract";
 import { FaucetError, FaucetRequest, requestFaucet } from "./faucet";
 import { SponsorError, SponsorRequest, sponsorClaim } from "./sponsor";
 import { VoiceError, VoiceRequest, createVoiceSession } from "./voice";
+
+// Some networks advertise IPv6 without routing it; try IPv4 first so Horizon and RPC calls don't stall.
+setDefaultResultOrder("ipv4first");
 
 const app = new Hono();
 

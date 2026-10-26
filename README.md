@@ -17,6 +17,7 @@ recoverable claimable balance, and before you sign anything Nilo explains the tr
 
 - [How investing works](#how-investing-works)
 - [The mandate contract](#the-mandate-contract)
+- [Check it yourself](#check-it-yourself)
 - [Payments that can't get lost](#payments-that-cant-get-lost)
 - [Why you can trust what you sign](#why-you-can-trust-what-you-sign)
 - [Prices from Reflector](#prices-from-reflector)
@@ -35,14 +36,21 @@ recoverable claimable balance, and before you sign anything Nilo explains the tr
    | Personality | Profile | Split | Weekly limit | Always kept in wallet |
    |---|---|---|---|---|
    | Guardian | Conservative | 100% XOXNO Lending on Stellar | 50 USDC | 5 USDC |
-   | Balanced | Moderate | 60% XOXNO, 40% Aave on Arbitrum via Circle CCTP | 100 USDC | 5 USDC |
-   | Explorer | Aggressive | 30% XOXNO, 70% Aave on Arbitrum via Circle CCTP | 250 USDC | 2 USDC |
+   | Balanced | Moderate | 60% XOXNO, 40% to your own wallet on Base via Circle CCTP | 100 USDC | 5 USDC |
+   | Explorer | Aggressive | 30% XOXNO, 70% to your own wallet on Base via Circle CCTP | 250 USDC | 2 USDC |
 
-   Venues the deployment can't reach yet are dropped from the mandate. On the current testnet deployment that
-   means XOXNO Lending only; the CCTP leg is wired once its destination vault is deployed.
+   The XOXNO share earns XOXNO's supply rate (about 1.15% a year on testnet). The Base share is burned on Stellar
+   and minted on Base Sepolia by Circle's Forwarding Service, which pays the gas there and keeps a small fee (about
+   0.06 USDC, capped at 0.5 USDC by the contract). It lands as plain USDC in the EVM wallet you named in the mandate
+   and **doesn't earn anything yet**. Without an EVM wallet, the mandate leaves Base out and that share goes to XOXNO.
+   Advanced users can also write their own rules in the chat ("invest at most 30 dollars a week, I'm
+   conservative"); the model only reads the request, and code builds the mandate within fixed bounds (at most 1,000
+   USDC a week, for at most 90 days).
 3. **Sign the mandate once.** On the **Agent** page you sign a mandate (weekly cap, allowed venues, expiry, 30 days
    by default) and a USDC allowance to the NiloAgent contract that covers that period. That is the only signature
-   the agent needs.
+   the agent needs. Before you sign, the browser decodes the transaction with
+   [`explainAgent`](packages/core/src/explainAgent.ts) and rejects anything else: another contract, another
+   account, an authorization beyond the expected USDC approval, or a fee above 5 XLM.
 4. **Nilo invests while you sleep.** The server checks every wallet with a mandate on a schedule
    (`AGENT_INTERVAL_MINUTES`, every 60 minutes by default) and splits your available USDC across the allowed venues
    by the personality's weights, always leaving your reserve in the wallet.
@@ -54,19 +62,58 @@ recoverable claimable balance, and before you sign anything Nilo explains the tr
 ## The mandate contract
 
 [`contracts/soroban/nilo-agent`](contracts/soroban/nilo-agent) is what makes "invest on my behalf" safe without
-custody. Testnet contract: `CC4VU642T2Z4IEGANZV4HUIEQDOWP2YONA6AFX53WUHNYGZ5VZTZQTR7`.
+custody. Testnet contract:
+[`CDDWGI7BZMRP4H4NREJVGO56RWIZISX6BARK5T3MZGHLK5JAXW2R7YZJ`](https://stellar.expert/explorer/testnet/contract/CDDWGI7BZMRP4H4NREJVGO56RWIZISX6BARK5T3MZGHLK5JAXW2R7YZJ).
 
 | Rule | How the contract enforces it |
 |---|---|
 | Only you set the rules | `set_mandate` and `revoke` require your signature. |
 | The operator can only invest | Nilo's operator key can call `invest`, `withdraw` and `renew`, nothing else. |
-| Only approved venues | `invest` refuses any venue not in your mandate's bitmask (XOXNO Lending, or CCTP to Nilo's vault). |
+| Only approved venues | `invest` refuses any venue not in your mandate's bitmask (XOXNO Lending, or CCTP to your own EVM wallet). |
+| Cross-chain goes only to you | The destination wallet is part of the mandate you sign; the operator can't change it, and Circle's fee per move is capped at 0.5 USDC. |
 | Inside the caps | Each period's total is checked against your limit; going over fails with `OverLimit`. |
 | It expires | After `expires_at` the agent can no longer invest. |
 | Withdrawals only pay you | `withdraw` can be called by you or the operator, and XOXNO pays the USDC straight to your address. |
 
 Nilo's operator key (`NILO_OPERATOR_SECRET`) lives on the server only. Even if it leaked, the contract would only
-let it move your USDC into your own positions, within your caps, and back to you.
+let it move your USDC into your own positions or your own EVM wallet, within your caps, and back to you.
+
+## Check it yourself
+
+These run without any `.env`:
+
+```bash
+npm install
+npm test               # core: payments and agent explainers, tamper cases, allocation (79 tests)
+npm run test:contract  # NiloAgent contract (10 tests); needs Rust
+```
+
+On-chain, testnet:
+
+| What | Where |
+|---|---|
+| `NiloAgent` contract | [`CDDWGI7BZMRP4H4NREJVGO56RWIZISX6BARK5T3MZGHLK5JAXW2R7YZJ`](https://stellar.expert/explorer/testnet/contract/CDDWGI7BZMRP4H4NREJVGO56RWIZISX6BARK5T3MZGHLK5JAXW2R7YZJ) |
+| Nilo's operator (the only key that can call `invest`) | [`GA3LXZFTBW6PQQUKAK26MPY3A3TV4MNMWDC3MUCLTHXAFQJ6NDJSMCGZ`](https://stellar.expert/explorer/testnet/account/GA3LXZFTBW6PQQUKAK26MPY3A3TV4MNMWDC3MUCLTHXAFQJ6NDJSMCGZ) |
+| The agent supplies 8.4 USDC to XOXNO (Explorer, 30%) | [`4beb1e21…`](https://stellar.expert/explorer/testnet/tx/4beb1e214b549a07fa902e81ad42d142224066b3dc864133f18af15d6ab8fe9a) |
+| The agent burns 19.6 USDC on Stellar for Base (Explorer, 70%) | [`095e1e38…`](https://stellar.expert/explorer/testnet/tx/095e1e38971910aeaecc0f8674707700ca57d28bbbabe120fdf92c2a80ee2cec) |
+| Circle mints it on Base Sepolia | [`0x31602acf…`](https://sepolia.basescan.org/tx/0x31602acf3a6ff58bf3bce62dd91793983eb1ed39713c871d2417e699cd315f7b) |
+
+Read a live mandate without signing anything:
+
+```bash
+stellar contract invoke --id CDDWGI7BZMRP4H4NREJVGO56RWIZISX6BARK5T3MZGHLK5JAXW2R7YZJ --network testnet \
+  --source-account GA3LXZFTBW6PQQUKAK26MPY3A3TV4MNMWDC3MUCLTHXAFQJ6NDJSMCGZ --send=no \
+  -- mandate --user GCXQPCJYM5LUEXO73XMJQ26U2FNVF7PRAVBJGHSBSTIUO3YCRRKYP7O4
+```
+
+The smoke scripts redo all of this on testnet with fresh accounts. They need Nilo's operator key
+(`NILO_OPERATOR_SECRET`), so they are for the team, not for checking the claims above:
+
+| Command | What it does |
+|---|---|
+| `npm run smoke:agent` | Mandate, an investment by the operator on its own, an over-limit investment refused, a withdrawal by the operator paying the user, withdraw all, revoke. Against the real XOXNO contract. |
+| `npx tsx scripts/smoke-agent-api.ts` | The same through the server's API, as the web app does. It decodes each transaction with `explainAgent` before signing locally in place of Pollar. Needs `npm run dev`. |
+| `npx tsx scripts/smoke-crosschain.ts 0x…` | Moves 2 USDC from Stellar to that address on Base Sepolia and waits for Circle to mint it. |
 
 ## Payments that can't get lost
 
@@ -172,8 +219,8 @@ you sign is the asset amount, explained from the XDR as before.
    | `OPENAI_VOICE_BACKEND_MODEL`, `OPENAI_VOICE` | Optional, for voice mode (GPT-Live, needs a paid API tier). The model that turns speech into a send or price request defaults to `OPENAI_MODEL`; the voice to `marin`. |
    | `VOICE_ALLOWED_ADDRESSES` | Optional. Voice mode is for signed-in wallets, which sign a message once (SEP-53) so the server can tell who opens sessions on its key. Set comma-separated G… addresses to allow only those wallets, e.g. the presenter's during a demo. |
    | `VITE_POLLAR_API_KEY` | Pollar dashboard → Build → API Keys → **publishable** key (`pub_testnet_…`). Never use a secret key here: `VITE_*` values are shipped to the browser. |
-   | `NILO_OPERATOR_SECRET` | Optional, server-side only. Testnet key of Nilo's operator, the only key the NiloAgent contract lets call `invest`. Without it the scheduled agent doesn't start. `AGENT_INTERVAL_MINUTES` (default 60) and `DATA_DIR` (default `data`) are optional. |
-| `SPONSOR_SECRET` | Written for you by step 4. Testnet secret of the account that pays claim fees and trustline reserves. Server-side only. |
+   | `NILO_OPERATOR_SECRET` | Optional, server-side only. Testnet key of Nilo's operator, the only key the NiloAgent contract lets call `invest`. Without it the scheduled agent doesn't start, and everything else works. `AGENT_INTERVAL_MINUTES` (default 60) and `DATA_DIR` (default `data`) are optional. |
+   | `SPONSOR_SECRET` | Written for you by step 4. Testnet secret of the account that pays claim fees and trustline reserves. Server-side only. |
 
 3. In the Pollar dashboard, add `http://localhost:5173` as an allowed origin and redirect URI, and make sure the app
    has credits for wallet creation.
@@ -250,7 +297,7 @@ Helper scripts:
 | [`apps/server`](apps/server) | Four endpoints. `POST /api/extract`: chat messages in, a structured send intent, price question or clarifying question out. `POST /api/sponsor-claim`: balance ID and claimant in, a claim signed by the sponsor out. `POST /api/faucet`: an address in, 100 test USDC from the Sozu Faucet, rate-limited per account (1/day), per IP (3/day), per server (20/hour), one at a time, and paused while Sozu says it is out or cooling down. `POST /api/voice/session`: a WebRTC SDP offer and a SEP-53 proof of wallet ownership in, the SDP answer of a GPT-Live voice session out, rate-limited per wallet (10/hour) and per server (60/hour). Nothing is built or signed there: the browser shows the usual review. |
 | [`apps/web`](apps/web) | Vite + React. **Chat** (send by chat or form, check balance, ask for a price), **Agent** (profile, mandate, positions), **Claim** (recipient), **Sent** (sender recovers). Login and signing through Pollar. Works on phones too. |
 | [`contracts/soroban/nilo-agent`](contracts/soroban/nilo-agent) | The NiloAgent Soroban contract: mandates, caps, venues, invest, withdraw and revoke, with its tests. |
-| [`apps/server/src/agent`](apps/server/src/agent) | The scheduled agent that reads each mandate and invests with the operator key. |
+| [`apps/server/src/agent`](apps/server/src/agent) | The scheduled agent that reads each mandate and invests with the operator key, the `/api/agent` routes (build the mandate, revoke and withdraw transactions; activate; run; status), and the CCTP follow-up with Circle. |
 | [`scripts/`](scripts) | Testnet and sponsor setup, the wallet-free smoke tests, and the demo reset. |
 
 ## Limits of v1
@@ -262,4 +309,17 @@ Helper scripts:
 - One sponsor account, with no rate limit beyond "one claim per balance". That's fine on testnet, but it would need
   limits before mainnet.
 - Passkey smart wallets (`C…` addresses) are not supported: claimable balances are classic operations.
+- The agent's share on Base is plain USDC in your wallet: it doesn't earn yield there yet, and bringing it back to
+  Stellar is up to you.
+- The Base share needs an EVM wallet from Pollar, so the Pollar app must have Polygon wallets enabled.
+- The automated checks sign the mandate with local test keys. In the app, Pollar signs the same transaction, but no
+  check signs with a real Pollar login.
+- XOXNO Lending on Stellar is in mainnet beta with its audit pending, and its code is under a noncommercial license.
+  Nilo uses it on testnet only.
+
+## Next
+
+- Put the Base share to work (for example in an ERC-4626 vault), and bring it back to Stellar through CCTP.
+- Path payments with a strict worst-case price shown before signing, so "send 50 USDC, pay in XLM" stays just as
+  explainable.
 
