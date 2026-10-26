@@ -14,7 +14,9 @@
     "dev:server": "npm run dev -w apps/server",
     "dev:web": "npm run dev -w apps/web",
     "dev": "concurrently -k -n server,web -c blue,magenta \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
-    "demo:reset-maria": "tsx scripts/reset-maria.ts"
+    "demo:reset-maria": "tsx scripts/reset-maria.ts",
+    "test:contract": "cargo test --manifest-path contracts/soroban/Cargo.toml",
+    "smoke:agent": "tsx scripts/smoke-agent.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

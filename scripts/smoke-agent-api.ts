@@ -1,14 +1,15 @@
 // Drives the agent through the server's API the way the web app does, signing
 // locally in place of Pollar: build the mandate, decode and check it, sign,
 // activate (the agent invests right away), then withdraw everything and revoke.
-// Needs the dev server running (npm run dev). KEEP=1 leaves the mandate active.
+// Needs the dev server running (npm run dev). KEEP=1 leaves the mandate active;
+// PERSONALITY=explorer EVM=0x… adds the cross-chain leg to that wallet.
 import { Transaction } from "@stellar/stellar-sdk";
 import { TESTNET_AGENT, defaultConfig, explainAgent, mandateMismatches } from "../packages/core/src";
 import { submit } from "../apps/server/src/agent/soroban";
 import { testUser } from "./test-user";
 
 const API = process.env.API ?? "http://localhost:8787/api/agent";
-const user = await testUser(".env.agent", "API_USER_SECRET", 15);
+const user = await testUser(".env.agent", process.env.USER_KEY ?? "API_USER_SECRET", 15);
 const address = user.publicKey();
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -21,7 +22,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 async function signChecked(xdr: string, label: string) {
   const e = explainAgent(xdr, defaultConfig, TESTNET_AGENT);
   if (e.kind !== "agent") throw new Error(`${label} was not recognized: ${e.lines.join(" ")}`);
-  console.log(`   decoded ${label}:\n     ${e.lines.slice(0, 4).join("\n     ")}`);
+  console.log(`   decoded ${label}:\n     ${e.lines.slice(0, 5).join("\n     ")}`);
   const tx = new Transaction(xdr, defaultConfig.networkPassphrase);
   tx.sign(user);
   return submit(tx);
@@ -30,10 +31,11 @@ async function signChecked(xdr: string, label: string) {
 console.log("1. mandate built by the server, decoded and checked before signing");
 const m = await post<{ xdr: string; mandate: { limit: string; period: number; expiresAt: number; venues: number; profile: string }; allowance: string }>(
   "/mandate-tx",
-  { address, personality: "guardian" },
+  { address, personality: process.env.PERSONALITY ?? "guardian", evmRecipient: process.env.EVM },
 );
 const decoded = explainAgent(m.xdr, defaultConfig, TESTNET_AGENT);
 const wrong = mandateMismatches(decoded, address, { ...m.mandate, limit: BigInt(m.mandate.limit) }, BigInt(m.allowance));
+if (process.env.EVM && !decoded.lines.some((l) => l.includes(process.env.EVM!.toLowerCase()))) throw new Error("The mandate does not name the EVM wallet.");
 if (wrong.length) throw new Error(`Mandate mismatch: ${wrong.join(", ")}`);
 await signChecked(m.xdr, "mandate");
 

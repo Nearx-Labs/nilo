@@ -2,8 +2,9 @@
 //! NiloAgent: lets Nilo's agent invest a user's USDC while they sleep, without
 //! ever holding the user's key. The user signs a mandate once (caps, venues,
 //! expiry) and an allowance to this contract. Nilo's operator key can then only
-//! move that USDC into the allowed venues, inside the caps, and withdrawals only
-//! ever pay the user. The user can revoke at any time.
+//! move that USDC into the allowed venues, inside the caps: XOXNO Lending on
+//! Stellar, or the user's own wallet on another chain through Circle CCTP.
+//! Withdrawals only ever pay the user. The user can revoke at any time.
 
 mod venues;
 #[cfg(test)]
@@ -19,11 +20,15 @@ use venues::{TokenMessengerClient, XoxnoClient};
 
 /// Venue bits in `Mandate::venues`.
 pub const VENUE_XOXNO: u32 = 1;
-pub const VENUE_AAVE_ARBITRUM: u32 = 2;
-const ALL_VENUES: u32 = VENUE_XOXNO | VENUE_AAVE_ARBITRUM;
+/// USDC delivered by Circle CCTP to the user's own wallet on the destination chain.
+pub const VENUE_CROSSCHAIN: u32 = 2;
+const ALL_VENUES: u32 = VENUE_XOXNO | VENUE_CROSSCHAIN;
 
 /// CCTP Standard transfer; Stellar sources only support this tier.
 const CCTP_FINALITY_STANDARD: u32 = 2000;
+/// Hook data that asks Circle's Forwarding Service to finish the mint on the
+/// destination and pay its gas, taking its fee from the minted USDC: "cctp-forward", zero-padded.
+const CCTP_FORWARD: [u8; 32] = *b"cctp-forward\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 const MIN_PERIOD_SECONDS: u64 = 60;
 
 const DAY_LEDGERS: u32 = 17_280;
@@ -41,8 +46,8 @@ pub struct Config {
     pub spoke_id: u32,
     pub messenger: Address,
     pub dest_domain: u32,
-    /// Nilo's vault on the destination chain, as CCTP's 32-byte address.
-    pub vault: BytesN<32>,
+    /// Most the operator may let Circle's forwarder take per transfer (USDC, 7 decimals).
+    pub max_bridge_fee: i128,
 }
 
 /// What the user lets the agent do. Signed by the user once.
@@ -58,6 +63,8 @@ pub struct Mandate {
     pub venues: u32,
     /// The personality the user chose, for display.
     pub profile: Symbol,
+    /// The user's own wallet on the destination chain (CCTP 32-byte form). Needed for `VENUE_CROSSCHAIN`.
+    pub evm_recipient: Option<BytesN<32>>,
 }
 
 #[contracttype]
@@ -75,7 +82,7 @@ pub struct Position {
     pub xoxno_account: u64,
     /// USDC supplied to XOXNO and not yet withdrawn.
     pub xoxno_principal: i128,
-    /// USDC sent to the destination-chain vault.
+    /// USDC sent to the user's wallet on the destination chain, fees included.
     pub bridged: i128,
 }
 
@@ -124,6 +131,7 @@ impl NiloAgent {
             || mandate.venues == 0
             || mandate.venues & !ALL_VENUES != 0
             || allowance < 0
+            || (mandate.venues & VENUE_CROSSCHAIN != 0 && mandate.evm_recipient.is_none())
         {
             panic_with_error!(&env, Error::BadMandate);
         }
@@ -148,10 +156,11 @@ impl NiloAgent {
     }
 
     /// Called by Nilo's agent: moves `amount` of the user's USDC into one venue, within the mandate.
-    pub fn invest(env: Env, user: Address, venue: u32, amount: i128) {
+    /// `max_fee` is what Circle's forwarder may keep on a cross-chain move (0 for XOXNO).
+    pub fn invest(env: Env, user: Address, venue: u32, amount: i128, max_fee: i128) {
         let cfg = config(&env);
         cfg.operator.require_auth();
-        if amount <= 0 {
+        if amount <= 0 || max_fee < 0 || (venue == VENUE_XOXNO && max_fee != 0) {
             panic_with_error!(&env, Error::BadAmount);
         }
         let mandate: Mandate = get(&env, &DataKey::Mandate(user.clone())).unwrap_or_else(|| panic_with_error!(&env, Error::NoMandate));
@@ -159,7 +168,7 @@ impl NiloAgent {
         if now >= mandate.expires_at {
             panic_with_error!(&env, Error::Expired);
         }
-        if (venue != VENUE_XOXNO && venue != VENUE_AAVE_ARBITRUM) || mandate.venues & venue == 0 {
+        if (venue != VENUE_XOXNO && venue != VENUE_CROSSCHAIN) || mandate.venues & venue == 0 {
             panic_with_error!(&env, Error::VenueNotAllowed);
         }
         let mut usage: Usage = get(&env, &DataKey::Usage(user.clone())).unwrap_or_default();
@@ -202,27 +211,29 @@ impl NiloAgent {
                 xoxno.supply(&this, &position.xoxno_account, &cfg.spoke_id, &vec![&env, (key, amount)]);
             position.xoxno_principal += amount;
         } else {
-            // CCTP moves 6 decimals; refuse amounts that would leave dust here.
-            if amount % 10 != 0 {
+            // CCTP moves 6 decimals; refuse amounts that would leave dust here. The fee cap stops the
+            // operator from handing the user's money to the forwarder.
+            if amount % 10 != 0 || max_fee % 10 != 0 || max_fee > cfg.max_bridge_fee || max_fee * 2 > amount {
                 panic_with_error!(&env, Error::BadAmount);
             }
+            let recipient = mandate.evm_recipient.clone().unwrap_or_else(|| panic_with_error!(&env, Error::VenueNotAllowed));
             usdc.approve(&this, &cfg.messenger, &amount, &(env.ledger().sequence() + 100));
             TokenMessengerClient::new(&env, &cfg.messenger).deposit_for_burn_with_hook(
                 &this,
                 &amount,
                 &cfg.dest_domain,
-                &cfg.vault,
+                &recipient,
                 &cfg.usdc,
-                &cfg.vault,
-                &0,
+                &BytesN::from_array(&env, &[0; 32]),
+                &max_fee,
                 &CCTP_FINALITY_STANDARD,
-                &beneficiary(&env, &user),
+                &Bytes::from_array(&env, &CCTP_FORWARD),
             );
             position.bridged += amount;
         }
         put(&env, &DataKey::Position(user.clone()), &position);
         #[allow(deprecated)]
-        env.events().publish((symbol_short!("invest"), user), (venue, amount));
+        env.events().publish((symbol_short!("invest"), user), (venue, amount, max_fee));
     }
 
     /// Withdraws from the user's XOXNO position straight to the user. `amount` 0 withdraws everything.
@@ -311,13 +322,4 @@ fn get<V: soroban_sdk::TryFromVal<Env, soroban_sdk::Val>>(env: &Env, key: &DataK
 fn put<V: soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &DataKey, value: &V) {
     env.storage().persistent().set(key, value);
     env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
-}
-
-/// The CCTP hook data: the user's G strkey, so the destination vault credits them
-/// and can send withdrawals back through Circle's Stellar forwarder.
-fn beneficiary(env: &Env, user: &Address) -> Bytes {
-    let strkey = user.to_string();
-    let mut buf = [0u8; 56];
-    strkey.copy_into_slice(&mut buf);
-    Bytes::from_array(env, &buf)
 }

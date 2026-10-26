@@ -5,6 +5,7 @@ import { Horizon, Keypair } from "@stellar/stellar-sdk";
 import {
   type Mandate,
   TESTNET_AGENT,
+  VENUE_CROSSCHAIN,
   VENUES,
   agentCalls,
   defaultConfig,
@@ -15,8 +16,9 @@ import {
   toStroops,
   usdcToStroops,
 } from "@nilo/core";
+import { bridgeFee, waitForForward } from "./cctp";
 import { invoke, read } from "./soroban";
-import { type Activity, addUser, log, users } from "./store";
+import { type Activity, addUser, log, pendingForwards, setPending, users } from "./store";
 
 const calls = agentCalls(TESTNET_AGENT);
 const horizon = new Horizon.Server(defaultConfig.horizonUrl);
@@ -102,6 +104,18 @@ export async function runFor(user: string, trigger: NonNullable<Activity["trigge
     for (const leg of split(amount, p, mandate.venues & reachable)) {
       const usdc = String(stroopsToUsdc(leg.amount));
       try {
+        if (leg.venue === VENUE_CROSSCHAIN) {
+          const fee = await bridgeFee();
+          // Circle's fee is roughly fixed: below this a move would mostly pay gas.
+          if (leg.amount < fee * 10n) {
+            done.push(log({ user, trigger, kind: "skip", venue: leg.venue, amount: usdc, note: `${usdc} USDC is too little to move cross-chain; Circle's fee would eat most of it.` }));
+            continue;
+          }
+          const { hash } = await invoke(signer, calls.invest(user, leg.venue, leg.amount, fee));
+          done.push(log({ user, trigger, kind: "invest", venue: leg.venue, amount: usdc, hash, note: `Sent ${usdc} USDC to your wallet ${mandate.evmRecipient} on ${TESTNET_AGENT.destination.name} through Circle CCTP.` }));
+          void followForward(user, hash, leg.amount, fee);
+          continue;
+        }
         const { hash } = await invoke(signer, calls.invest(user, leg.venue, leg.amount));
         done.push(log({ user, trigger, kind: "invest", venue: leg.venue, amount: usdc, hash, note: `Invested ${usdc} USDC into ${VENUES[leg.venue].name} on ${VENUES[leg.venue].place}.` }));
       } catch (e) {
@@ -112,6 +126,27 @@ export async function runFor(user: string, trigger: NonNullable<Activity["trigge
     return done;
   } finally {
     running.delete(user);
+  }
+}
+
+/** Logs when Circle has minted a cross-chain move on the destination (usually within a minute). */
+async function followForward(user: string, stellarHash: string, amount: bigint, maxFee: bigint) {
+  const pending = { user, hash: stellarHash, amount: amount.toString(), fee: maxFee.toString() };
+  setPending(pending);
+  const f = await waitForForward(stellarHash, 20 * 60_000);
+  setPending(pending, f.state !== "pending");
+  const dest = TESTNET_AGENT.destination;
+  if (f.state === "forwarded") {
+    log({
+      user,
+      kind: "invest",
+      venue: VENUE_CROSSCHAIN,
+      amount: String(stroopsToUsdc(amount - maxFee)),
+      link: f.forwardTxHash ? `${dest.explorer}/tx/${f.forwardTxHash}` : undefined,
+      note: `Arrived on ${dest.name}: about ${stroopsToUsdc(amount - maxFee)} USDC in your wallet after Circle's gas fee.`,
+    });
+  } else {
+    log({ user, kind: "error", venue: VENUE_CROSSCHAIN, note: `Circle has not delivered the cross-chain move from ${stellarHash.slice(0, 10)}… yet. The USDC is safe in CCTP; Nilo will keep checking.` });
   }
 }
 
@@ -136,6 +171,8 @@ export function startSchedule() {
     console.warn("No NILO_OPERATOR_SECRET set: the investing agent is off.");
     return;
   }
+  // Pick up cross-chain moves a restart interrupted.
+  for (const p of pendingForwards()) void followForward(p.user, p.hash, BigInt(p.amount), BigInt(p.fee));
   const minutes = Number(process.env.AGENT_INTERVAL_MINUTES ?? 60);
   setInterval(() => void runAll(), Math.max(1, minutes) * 60_000);
   console.log(`Investing agent runs every ${minutes} min for ${users().length} account(s).`);

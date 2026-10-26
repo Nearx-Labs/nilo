@@ -16,12 +16,23 @@ export interface Activity {
   /** USDC, as a decimal string. */
   amount?: string;
   hash?: string;
+  /** Explorer link for something that happened off Stellar (for example the mint on the destination chain). */
+  link?: string;
   note: string;
+}
+
+/** A cross-chain move Circle hasn't delivered yet; kept so a restart can keep following it. */
+export interface PendingForward {
+  user: string;
+  hash: string;
+  amount: string;
+  fee: string;
 }
 
 interface State {
   users: string[];
   activity: Activity[];
+  pending?: PendingForward[];
 }
 
 const MAX_ACTIVITY = 1_000;
@@ -66,6 +77,14 @@ export function log(entry: Omit<Activity, "id" | "at">): Activity {
   if (state.activity.length > MAX_ACTIVITY) state.activity.splice(0, state.activity.length - MAX_ACTIVITY);
   save();
   return a;
+}
+
+export const pendingForwards = () => [...(state.pending ?? [])];
+
+export function setPending(p: PendingForward, done = false) {
+  state.pending = (state.pending ?? []).filter((x) => x.hash !== p.hash);
+  if (!done) state.pending.push(p);
+  save();
 }
 
 export const activityFor = (user: string, limit = 50) => state.activity.filter((a) => a.user === user).slice(-limit).reverse();
