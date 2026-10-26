@@ -1,8 +1,8 @@
-import type { Explanation } from "@nilo/core";
+import type { AnyExplanation } from "./SignPanel";
 import { formatLocal, formatRelative, useNow } from "../time";
 
 /** Renders the template explanation. Text here comes from the XDR, never from the AI. */
-export function ExplainCard({ explanation, problems = [] }: { explanation: Explanation; problems?: string[] }) {
+export function ExplainCard({ explanation, problems = [] }: { explanation: AnyExplanation; problems?: string[] }) {
   const now = useNow();
   const bad = explanation.kind === "unrecognized" || problems.length > 0;
   return (

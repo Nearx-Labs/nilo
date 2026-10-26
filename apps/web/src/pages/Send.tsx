@@ -20,6 +20,7 @@ import {
   formatUtc,
   fromStroops,
   isFiat,
+  type Explanation,
   mismatches,
   nicknameFor,
   pickBalances,
@@ -52,11 +53,13 @@ import { getQuote, shortContract } from "../prices";
 import { FAUCET_BELOW, asSnapshot, config, loadAccount, requestFaucet } from "../stellar";
 import { formatLocal, formatRelative } from "../time";
 import { useVoiceSession } from "../voice";
+import type { AgentRequest } from "../agent";
 import { SETUP_TEXT, useAccountSetup, useVoiceProof, useWallet } from "../wallet";
 
 type ExtractResponse =
   | { status: "complete"; intent: SendIntent }
   | { status: "price"; query: PriceQuery }
+  | { status: "agent"; request: AgentRequest }
   | { status: "needs_clarification"; question: string }
   | { status: "error"; message: string };
 
@@ -645,6 +648,9 @@ export function ChatPage({ bot }: { bot: Bot }) {
         await startReview(data.intent);
       } else if (data.status === "price") {
         await answerPrice(data.query);
+      } else if (data.status === "agent") {
+        say("I'll set up your investing agent. Review the mandate: it says exactly what the agent may do, and you sign it once.");
+        navigate("/agent", { state: { agent: data.request } });
       } else if (data.status === "needs_clarification") {
         say(data.question);
       } else {
@@ -685,7 +691,7 @@ export function ChatPage({ bot }: { bot: Bot }) {
       const built = buildSendTx(resolved, account, config);
       return {
         xdr: built.xdr,
-        check: (e) => {
+        check: (e: Explanation) => {
           setSent({ deadline: built.deadline, balanceId: built.balanceId });
           return mismatches(e, resolved, address, built.deadline);
         },

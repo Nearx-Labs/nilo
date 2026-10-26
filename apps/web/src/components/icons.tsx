@@ -150,3 +150,17 @@ export const UserIcon = (p: P) => (
     <path d="M4 21a8 8 0 0 1 16 0" />
   </Icon>
 );
+export const AgentIcon = (p: P) => (
+  <Icon {...p}>
+    <rect x="4" y="8" width="16" height="12" rx="3" />
+    <path d="M12 4v4" />
+    <circle cx="12" cy="3" r="1" />
+    <path d="M9 13v1.5M15 13v1.5" />
+    <path d="M2 13v3M22 13v3" />
+  </Icon>
+);
+export const MoonIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z" />
+  </Icon>
+);

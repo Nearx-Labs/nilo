@@ -4,3 +4,5 @@ dist
 .env.*
 !.env.example
 .claude/
+contracts/soroban/target
+data
